@@ -1,0 +1,25 @@
+# DATABASE CONNECTION
+# PostgreSQL connection string (e.g. postgresql://username:password@hostname:port/dbname?sslmode=require)
+DATABASE_URL=postgresql://username:password@hostname:port/dbname?sslmode=require
+
+# SECRET KEYS FOR JWT/COOKIES
+# Secret keys used for signing sessions and cryptographic utilities
+SECRET_KEY=your_fallback_secret_key_here
+JWT_SECRET=your_jwt_secret_key_here
+
+# DATA SYNC CONFIG
+# Configuration parameters for backend data synchronization engines
+SYNC_INTERVAL_HOURS=6
+SYNC_INTERVAL_MS=1800000
+API_TIMEOUT=30
+API_RETRY_COUNT=2
+
+# HEALTH ANALYTICS CONSTANTS
+# Constants utilized by health dashboards to estimate sustainability metrics and financial savings
+CO2_PER_PATIENT_KG=0.3
+TARIFF_SAVED_PER_VISIT=150
+WAGE_LOSS_SAVED_PER_VISIT=200
+
+# LIVELIHOOD ANALYTICS CONSTANTS
+# Cost parameters utilized by livelihood analytics indicators
+PROGRAM_COST_LIVELIHOOD=500000
