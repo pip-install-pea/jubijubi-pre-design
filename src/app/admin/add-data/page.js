@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../../context/AuthContext';
+import { TABLE_SCHEMAS } from '@/lib/tableSchemas.js';
 
 /* ─── Static Table Menu (matches tableSchemas.js on server) ─── */
 const TABLE_MENU = {
@@ -212,6 +213,15 @@ export default function AddDataPage() {
   const [bulkResult, setBulkResult] = useState(null);
   const fileRef = useRef(null);
 
+  // Manage tab state
+  const [manualRecords, setManualRecords] = useState([]);
+  const [loadingManual, setLoadingManual] = useState(false);
+  const [manageError, setManageError] = useState('');
+  const [editRecord, setEditRecord] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editResult, setEditResult] = useState(null);
+
   // Compute visible categories
   const visibleCategories = Object.entries(TABLE_MENU).filter(([key]) => {
     return isAdmin || user?.thematic === key;
@@ -246,6 +256,21 @@ export default function AddDataPage() {
     }
   }, []);
 
+  const fetchManualRecords = useCallback(async (table) => {
+    if (!table) return;
+    setLoadingManual(true);
+    setManageError('');
+    try {
+      const res = await axios.get(`/api/data/list?table=${table}`);
+      setManualRecords(res.data.records || []);
+    } catch (err) {
+      setManageError(err.response?.data?.error || 'Failed to fetch manual records.');
+      setManualRecords([]);
+    } finally {
+      setLoadingManual(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (selectedTable) {
       loadLookups(selectedTable);
@@ -254,8 +279,13 @@ export default function AddDataPage() {
       setBulkPreview([]);
       setBulkResult(null);
       setBulkFile(null);
+      setManualRecords([]);
+      setManageError('');
+      if (mode === 'manage') {
+        fetchManualRecords(selectedTable);
+      }
     }
-  }, [selectedTable, loadLookups]);
+  }, [selectedTable, mode, loadLookups, fetchManualRecords]);
 
   // Build category label for selected table
   const selectedConfig = FIELD_CONFIGS[selectedTable] || [];
@@ -317,6 +347,80 @@ export default function AddDataPage() {
       setResult({ type: 'error', message: msg });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDeleteManual = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this record? This action cannot be undone.')) {
+      return;
+    }
+    try {
+      await axios.delete('/api/data/delete', {
+        data: { table: selectedTable, id }
+      });
+      fetchManualRecords(selectedTable);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete record.');
+    }
+  };
+
+  const handleEditClick = (record) => {
+    setEditRecord(record);
+    const initialData = {};
+    selectedConfig.forEach(field => {
+      initialData[field.col] = record[field.col] !== null ? record[field.col] : '';
+    });
+    setEditFormData(initialData);
+    setEditResult(null);
+  };
+
+  const handleEditFieldChange = (col, value) => {
+    setEditFormData(prev => {
+      const nextData = { ...prev, [col]: value };
+      if (col === 'state_id') {
+        nextData.district_id = '';
+        nextData.block_id = '';
+        nextData.village_id = '';
+        loadLookups(selectedTable, { state_id: value });
+      } else if (col === 'district_id') {
+        nextData.block_id = '';
+        nextData.village_id = '';
+        loadLookups(selectedTable, { 
+          state_id: nextData.state_id, 
+          district_id: value 
+        });
+      } else if (col === 'block_id') {
+        nextData.village_id = '';
+        loadLookups(selectedTable, { 
+          state_id: nextData.state_id, 
+          district_id: nextData.district_id, 
+          block_id: value 
+        });
+      }
+      return nextData;
+    });
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setEditSubmitting(true);
+    setEditResult(null);
+    try {
+      const pk = TABLE_SCHEMAS[selectedTable]?.primaryKey || selectedConfig[0]?.col;
+      await axios.put('/api/data/update', {
+        table: selectedTable,
+        id: editRecord[pk],
+        record: editFormData
+      });
+      setEditResult({ type: 'success', message: 'Record updated successfully!' });
+      setTimeout(() => {
+        setEditRecord(null);
+        fetchManualRecords(selectedTable);
+      }, 1500);
+    } catch (err) {
+      setEditResult({ type: 'error', message: err.response?.data?.error || 'Failed to update record.' });
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -422,6 +526,13 @@ export default function AddDataPage() {
               id="tab-bulk-upload"
             >
               📊 Bulk Upload (Excel/CSV)
+            </button>
+            <button
+              className={`tab-btn ${mode === 'manage' ? 'active' : ''}`}
+              onClick={() => { setMode('manage'); fetchManualRecords(selectedTable); }}
+              id="tab-manage-data"
+            >
+              🛠️ Manage Added Data
             </button>
           </div>
 
@@ -672,6 +783,237 @@ export default function AddDataPage() {
                     }
                   </button>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* ─── Manage Added Data Panel ─── */}
+          {mode === 'manage' && (
+            <div className="card" style={{ animation: 'fadeInUp 0.3s ease' }}>
+              <div className="card-body">
+                <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h3 className="card-title" style={{ fontSize: '16px' }}>Manage {selectedLabel}</h3>
+                    <p className="section-sub" style={{ fontSize: '12px', marginTop: '2px' }}>
+                      Update or delete records manually added to this table.
+                    </p>
+                  </div>
+                  <button 
+                    className="btn btn-outline" 
+                    onClick={() => fetchManualRecords(selectedTable)}
+                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+
+                {manageError && (
+                  <div className="badge badge-danger" style={{ marginBottom: '16px', padding: '8px 12px' }}>
+                    {manageError}
+                  </div>
+                )}
+
+                {loadingManual ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '30px 0' }}>
+                    <div className="spinner" style={{ width: '20px', height: '20px' }}></div>
+                    <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Loading manual records…</span>
+                  </div>
+                ) : manualRecords.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)', fontStyle: 'italic', border: '1px dashed var(--border)', borderRadius: 'var(--radius-md)' }}>
+                    No manually added records found for this table.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="data-table" style={{ fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          {selectedConfig.slice(0, 5).map(f => (
+                            <th key={f.col}>{f.label}</th>
+                          ))}
+                          <th>Added By</th>
+                          <th style={{ textAlign: 'center', width: '150px' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {manualRecords.map((record) => {
+                          const pk = TABLE_SCHEMAS[selectedTable]?.primaryKey || selectedConfig[0]?.col;
+                          const recordId = record[pk];
+                          return (
+                            <tr key={recordId}>
+                              {selectedConfig.slice(0, 5).map(f => (
+                                <td key={f.col} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                                  {record[f.col] !== null ? String(record[f.col]) : '—'}
+                                </td>
+                              ))}
+                              <td>{record.added_by_username || `ID: ${record.added_by}`}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                  <button
+                                    className="btn btn-outline"
+                                    style={{ padding: '4px 8px', fontSize: '11px', borderColor: 'var(--accent)', color: 'var(--accent)' }}
+                                    onClick={() => handleEditClick(record)}
+                                    id={`btn-edit-${recordId}`}
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-outline"
+                                    style={{ padding: '4px 8px', fontSize: '11px', borderColor: 'var(--danger)', color: 'var(--danger)' }}
+                                    onClick={() => handleDeleteManual(recordId)}
+                                    id={`btn-delete-${recordId}`}
+                                  >
+                                    🗑️ Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ─── Edit Record Overlay Modal ─── */}
+          {editRecord && (
+            <div 
+              className="modal-overlay" 
+              onClick={(e) => { if (e.target.className === 'modal-overlay') setEditRecord(null); }}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1000,
+                backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '24px'
+              }}
+            >
+              <div className="drilldown-box" style={{ maxWidth: '800px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                <div className="drilldown-header">
+                  <h3 className="drilldown-title">✏️ Edit Record</h3>
+                  <button className="modal-close" onClick={() => setEditRecord(null)} aria-label="Close">✕</button>
+                </div>
+                
+                <form onSubmit={handleEditSubmit} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <div className="drilldown-body" style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+                      gap: '16px'
+                    }}>
+                      {selectedConfig.map(field => {
+                        const isPrimaryKey = field.col === (TABLE_SCHEMAS[selectedTable]?.primaryKey || selectedConfig[0]?.col);
+                        return (
+                          <div className="form-group" key={field.col} style={{ marginBottom: 0 }}>
+                            <label className="form-label">
+                              {field.label}
+                              {field.required && <span style={{ color: 'var(--danger)', marginLeft: '2px' }}>*</span>}
+                            </label>
+
+                            {/* Text / Number */}
+                            {(field.type === 'text' || field.type === 'number') && (
+                              <input
+                                className="form-control"
+                                type={field.type === 'number' ? 'number' : 'text'}
+                                placeholder={field.placeholder || ''}
+                                value={editFormData[field.col] ?? ''}
+                                onChange={(e) => handleEditFieldChange(field.col, e.target.value)}
+                                required={field.required}
+                                disabled={isPrimaryKey}
+                                id={`edit-field-${field.col}`}
+                              />
+                            )}
+
+                            {/* Static Select */}
+                            {field.type === 'select' && (
+                              <select
+                                className="form-control"
+                                value={editFormData[field.col] ?? ''}
+                                onChange={(e) => handleEditFieldChange(field.col, e.target.value)}
+                                required={field.required}
+                                id={`edit-field-${field.col}`}
+                              >
+                                <option value="">— Select —</option>
+                                {(field.options || []).map(opt => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            )}
+
+                            {/* FK Dropdown */}
+                            {field.type === 'fk' && (
+                              <select
+                                className="form-control"
+                                value={editFormData[field.col] ?? ''}
+                                onChange={(e) => handleEditFieldChange(field.col, e.target.value)}
+                                required={field.required}
+                                id={`edit-field-${field.col}`}
+                                disabled={
+                                  (field.col === 'district_id' && !editFormData.state_id) ||
+                                  (field.col === 'block_id' && !editFormData.district_id) ||
+                                  (field.col === 'village_id' && !editFormData.block_id) ||
+                                  (field.col === 'batch_id' && selectedConfig.some(f => f.col === 'center_id') && !editFormData.center_id)
+                                }
+                              >
+                                <option value="">— Select —</option>
+                                {(lookups[field.col] || []).map(opt => (
+                                  <option key={opt.id} value={opt.id}>
+                                    {opt.label} ({opt.id})
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+
+                            {/* Textarea */}
+                            {field.type === 'textarea' && (
+                              <textarea
+                                className="form-control"
+                                rows={2}
+                                value={editFormData[field.col] ?? ''}
+                                onChange={(e) => handleEditFieldChange(field.col, e.target.value)}
+                                id={`edit-field-${field.col}`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {editResult && (
+                      <div
+                        className={`badge ${editResult.type === 'success' ? 'badge-success' : 'badge-danger'}`}
+                        style={{ marginTop: '16px', padding: '8px 14px', fontSize: '13px', display: 'block', textAlign: 'center' }}
+                      >
+                        {editResult.message}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="drilldown-footer" style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', borderTop: '1px solid var(--border)' }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => setEditRecord(null)}
+                      disabled={editSubmitting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={editSubmitting}
+                      id="btn-update-record"
+                    >
+                      {editSubmitting ? 'Updating…' : '💾 Save Changes'}
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           )}
