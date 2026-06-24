@@ -116,7 +116,7 @@ async function upsertRecords(tableName, records, uniqueField, fieldMap) {
   if (!records || records.length === 0) return 0;
   
   const columns = Object.values(fieldMap);
-  const allColumns = [...columns, 'synced_at'];
+  const allColumns = [...columns, 'synced_at', 'added_by'];
   let upsertedCount = 0;
   
   for (let i = 0; i < records.length; i += BATCH_SIZE) {
@@ -144,6 +144,10 @@ async function upsertRecords(tableName, records, uniqueField, fieldMap) {
       queryValues.push(new Date().toISOString());
       rowPlaceholders.push(`$${paramIdx++}`);
       
+      // added_by column
+      queryValues.push('api');
+      rowPlaceholders.push(`$${paramIdx++}`);
+      
       valuePlaceholders.push(`(${rowPlaceholders.join(', ')})`);
     }
     
@@ -153,6 +157,7 @@ async function upsertRecords(tableName, records, uniqueField, fieldMap) {
       .filter(col => col !== uniqueField)
       .map(col => `"${col}" = EXCLUDED."${col}"`);
     updateClauses.push(`"synced_at" = EXCLUDED."synced_at"`);
+    updateClauses.push(`"added_by" = EXCLUDED."added_by"`);
     
     const query = `
       INSERT INTO "${tableName}" (${allColumns.map(c => `"${c}"`).join(', ')})

@@ -105,11 +105,21 @@ export async function POST(req) {
           }
 
           // Inject created_at if missing
-          if (!record.created_at && !cols.includes('"created_at"')) {
+          const hasCreatedAt = body.table !== 'health_profile_doctors';
+          if (hasCreatedAt && !record.created_at && !cols.includes('"created_at"')) {
             cols.push('"created_at"');
             vals.push(now);
             placeholders.push(`$${idx}`);
             updateClauses.push(`"created_at" = EXCLUDED."created_at"`);
+            idx++;
+          }
+
+          // Inject added_by mapping to current user
+          if (user?.username) {
+            cols.push('"added_by"');
+            vals.push(user.username);
+            placeholders.push(`$${idx}`);
+            updateClauses.push(`"added_by" = EXCLUDED."added_by"`);
             idx++;
           }
 
