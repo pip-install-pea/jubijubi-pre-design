@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { fetchall } from '@/lib/db.js';
 import pool from '@/lib/db.js';
+import { generatePasswordHash } from '@/lib/crypto.js';
+
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+
+function validatePassword(pwd) {
+  if (!pwd || typeof pwd !== 'string' || pwd.length < 8) {
+    return 'Password must be at least 8 characters.';
+  }
+  if (!PASSWORD_RE.test(pwd)) {
+    return 'Password must contain uppercase, lowercase, digit, and special character.';
+  }
+  return null;
+}
 
 // DELETE: Delete a user (prevent self-deletion)
 export async function DELETE(req, { params }) {
@@ -47,7 +60,10 @@ export async function POST(req, { params }) {
 
   try {
     const resolvedParams = await params;
-    const uid = parseInt(resolvedParams.id, 10);
+    const uid = Number.parseInt(resolvedParams.id, 10);
+    if (Number.isNaN(uid)) {
+      return NextResponse.json({ error: 'Invalid user id' }, { status: 400 });
+    }
 
     const data = await req.json().catch(() => null);
     if (!data) {
@@ -65,16 +81,33 @@ export async function POST(req, { params }) {
     let idx = 1;
 
     if ('role_id' in data) {
+      const roleId = Number.parseInt(data.role_id, 10);
+      if (Number.isNaN(roleId)) {
+        return NextResponse.json({ error: 'Invalid role_id' }, { status: 400 });
+      }
       updates.push(`role_id = $${idx++}`);
-      values.push(parseInt(data.role_id, 10));
+      values.push(roleId);
     }
     if ('is_active' in data) {
       updates.push(`is_active = $${idx++}`);
       values.push(data.is_active ? 1 : 0);
     }
     if ('email' in data) {
+      const email = String(data.email || '').trim();
+      if (!email) {
+        return NextResponse.json({ error: 'Invalid email' }, { status: 400 });
+      }
       updates.push(`email = $${idx++}`);
-      values.push(String(data.email).trim());
+      values.push(email);
+    }
+    if ('password' in data) {
+      const password = String(data.password || '');
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        return NextResponse.json({ error: passwordError }, { status: 400 });
+      }
+      updates.push(`password_hash = $${idx++}`);
+      values.push(generatePasswordHash(password));
     }
 
     if (updates.length === 0) {

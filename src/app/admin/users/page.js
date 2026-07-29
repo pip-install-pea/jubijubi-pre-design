@@ -36,7 +36,7 @@ export default function UserManagementPage() {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('/api/admin/users/add', newUser);
+      await axios.post('/api/admin/users', newUser);
       setNewUser({ username: '', email: '', password: '', role_id: '' });
       fetchData();
     } catch (error) {
@@ -46,10 +46,22 @@ export default function UserManagementPage() {
 
   const handleEditUser = async (uid, updates) => {
     try {
-      await axios.post(`/api/admin/users/${uid}/edit`, updates);
+      await axios.patch(`/api/admin/users/${uid}`, updates);
       fetchData();
     } catch (error) {
-      alert('Failed to update user');
+      alert(error.response?.data?.error || 'Failed to update user');
+    }
+  };
+
+  const handleResetPassword = async (uid, username) => {
+    const password = window.prompt(`Enter a new password for ${username}`);
+    if (!password) return;
+    try {
+      await axios.patch(`/api/admin/users/${uid}`, { password });
+      fetchData();
+      alert('Password reset successfully');
+    } catch (error) {
+      alert(error.response?.data?.error || 'Failed to reset password');
     }
   };
 
@@ -194,6 +206,13 @@ export default function UserManagementPage() {
                               <option value="0">Inactive</option>
                             </select>
                           </div>
+                          <button 
+                            onClick={() => handleResetPassword(u.id, u.username)}
+                            className="btn btn-sm btn-secondary"
+                            style={{ marginLeft: '8px' }}
+                          >
+                            Reset Password
+                          </button>
                           <button 
                             onClick={() => handleDeleteUser(u.id, u.username)}
                             className="btn btn-sm btn-danger"
