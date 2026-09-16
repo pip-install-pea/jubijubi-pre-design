@@ -1,10 +1,27 @@
 import { Pool } from 'pg';
 
+function sslConfig() {
+  const url = process.env.DATABASE_URL || '';
+  const flag = String(process.env.DATABASE_SSL || '').toLowerCase();
+  if (flag === 'true' || flag === '1' || flag === 'require') {
+    return { rejectUnauthorized: false };
+  }
+  if (flag === 'false' || flag === '0' || flag === 'disable') {
+    return false;
+  }
+  if (/sslmode=(require|verify-ca|verify-full)/i.test(url)) {
+    return { rejectUnauthorized: false };
+  }
+  if (/sslmode=disable/i.test(url) || /localhost|127\.0\.0\.1/i.test(url)) {
+    return false;
+  }
+  // Neon / cloud URLs usually include sslmode=require; if not, keep SSL off for local.
+  return false;
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: sslConfig()
 });
 
 /**

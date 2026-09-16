@@ -166,6 +166,19 @@ async function ensureEnvelopeTables() {
     )
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS health_disease_patients (
+      id TEXT PRIMARY KEY,
+      year TEXT,
+      disease_id TEXT,
+      patient_id TEXT,
+      patient_name TEXT,
+      full_name TEXT,
+      payload TEXT,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS education_mixprogram (
       id TEXT PRIMARY KEY,
       program_id TEXT,
@@ -465,6 +478,18 @@ export const SYNC_PLANS = {
       }
     },
     {
+      table: 'health_disease_patients',
+      optional: true,
+      endpoint: 'health_desease.php',
+      uniqueField: 'id',
+      chainFromDiseaseSummary: true,
+      fieldMap: {
+        id: 'id', year: 'year', disease_id: 'disease_id',
+        patient_id: 'patient_id', patient_name: 'patient_name',
+        full_name: 'full_name', payload: 'payload'
+      }
+    },
+    {
       table: 'health_symptom_summary',
       optional: true,
       endpoint: 'health_symtoms.php',
@@ -754,6 +779,22 @@ function decorateRecords(plan, records, yearHint) {
       rec.id = rec.id || `${year}_${rec.symptom_id || rec.symtom_id || rec.id}`;
     });
   }
+  if (plan.table === 'health_disease_patients') {
+    records.forEach((rec, idx) => {
+      if (yearHint && rec.year == null) rec.year = yearHint;
+      const pid = rec.patient_id || rec.profile_patient_id || rec.id;
+      const pname = rec.patient_name || rec.full_name || rec.name;
+      rec.patient_id = pid;
+      rec.patient_name = pname;
+      rec.full_name = rec.full_name || pname;
+      rec.id = rec.id || `${rec.year || yearHint}_${rec.disease_id}_${pid || idx}`;
+      try {
+        rec.payload = JSON.stringify(rec).substring(0, 2000);
+      } catch (e) {
+        rec.payload = null;
+      }
+    });
+  }
   if (plan.table === 'education_mixprogram') {
     records.forEach((rec) => {
       if (yearHint && rec.year == null) rec.year = yearHint;
@@ -876,6 +917,28 @@ export async function syncModule(moduleName, forceFull = false) {
           if (chunkRecords && chunkRecords.length > 0) {
             totalFetched += chunkRecords.length;
             totalUpserted += await ingestRecords(plan, chunkRecords);
+          }
+        }
+      } else if (plan.chainFromDiseaseSummary) {
+        const maxIds = Number(process.env.DISEASE_PATIENT_MAX_IDS) || 12;
+        const limit = process.env.DISEASE_PATIENT_LIMIT || '50';
+        for (const year of HEALTH_SUMMARY_YEARS) {
+          const summary = await fetchWithRetry('health_desease.php', { module_type: 'health', year }, timeout, maxRetries);
+          const ids = [...new Set(summary.map((r) => r.disease_id || r.id).filter(Boolean))].slice(0, maxIds);
+          for (const diseaseId of ids) {
+            let records = await fetchWithRetry(plan.endpoint, {
+              module_type: 'health',
+              year,
+              disease_id: String(diseaseId),
+              Limit: String(limit),
+              offset: '0'
+            }, timeout, maxRetries);
+            records = decorateRecords(plan, records, year);
+            records.forEach((rec) => { rec.disease_id = rec.disease_id || String(diseaseId); });
+            totalFetched += records.length;
+            if (records.length > 0) {
+              totalUpserted += await ingestRecords(plan, records);
+            }
           }
         }
       } else if (plan.yearPayloads) {

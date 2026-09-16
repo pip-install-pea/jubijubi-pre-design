@@ -255,6 +255,59 @@ export const TABLE_SCHEMAS = {
     ]
   },
 
+  health_beneficiary_year: {
+    thematic: 'health',
+    label: 'Health — Year envelope',
+    primaryKey: 'year',
+    fields: [
+      { col: 'year', label: 'Calendar year', type: 'text', required: true },
+      { col: 'total_beneficiary', label: 'Total beneficiaries', type: 'number' },
+      { col: 'total_village', label: 'Villages', type: 'number' },
+      { col: 'total_state', label: 'States', type: 'number' },
+      { col: 'total_adolescent_10_19', label: 'Adolescents 10–19', type: 'number' },
+    ]
+  },
+
+  health_disease_summary: {
+    thematic: 'health',
+    label: 'Health — Disease mix summary',
+    primaryKey: 'id',
+    fields: [
+      { col: 'id', label: 'Row ID', type: 'text', required: true },
+      { col: 'year', label: 'Calendar year', type: 'text' },
+      { col: 'disease_id', label: 'Disease ID', type: 'text' },
+      { col: 'disease_name', label: 'Disease name', type: 'text' },
+      { col: 'total_patients', label: 'Patients', type: 'number' },
+    ]
+  },
+
+  health_disease_patients: {
+    thematic: 'health',
+    label: 'Health — Disease patients (sample)',
+    primaryKey: 'id',
+    fields: [
+      { col: 'id', label: 'Row ID', type: 'text', required: true },
+      { col: 'year', label: 'Calendar year', type: 'text' },
+      { col: 'disease_id', label: 'Disease ID', type: 'text' },
+      { col: 'patient_id', label: 'Patient ID', type: 'text' },
+      { col: 'patient_name', label: 'Patient name', type: 'text' },
+    ]
+  },
+
+  education_mixprogram: {
+    thematic: 'education',
+    label: 'Education — Mixprogramme schools',
+    primaryKey: 'id',
+    fields: [
+      { col: 'id', label: 'Row ID', type: 'text', required: true },
+      { col: 'program_id', label: 'Programme ID', type: 'text' },
+      { col: 'school_name', label: 'School name', type: 'text' },
+      { col: 'location', label: 'Location', type: 'text' },
+      { col: 'year', label: 'Year', type: 'text' },
+      { col: 'students_total', label: 'Students total', type: 'number' },
+    ]
+  },
+
   education_muskaan_assessment: {
     thematic: 'education',
     label: 'Education — Muskaan Skill Assessment',

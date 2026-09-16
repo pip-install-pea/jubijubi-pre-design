@@ -14,6 +14,9 @@ const TABLE_MENU = {
       { key: 'health_profile_patients', label: 'Patient Registration' },
       { key: 'health_profile_doctors', label: 'Doctor Registration' },
       { key: 'health_patient_appointments', label: 'Patient Appointment' },
+      { key: 'health_beneficiary_year', label: 'Year envelope' },
+      { key: 'health_disease_summary', label: 'Disease mix summary' },
+      { key: 'health_disease_patients', label: 'Disease patients (sample)' },
     ]
   },
   livelihood: {
@@ -24,12 +27,14 @@ const TABLE_MENU = {
       { key: 'skilltracking_monitor', label: 'Placement Monitor' },
       { key: 'enterprise_support', label: 'Enterprise Member' },
       { key: 'enterprise_support_monitoring', label: 'Enterprise Profit Monitor' },
+      { key: 'enterprise_market_access', label: 'Market Access' },
     ]
   },
   education: {
     label: 'Education',
     tables: [
       { key: 'education_program', label: 'Programme Session' },
+      { key: 'education_mixprogram', label: 'Mixprogramme schools' },
       { key: 'education_assessment', label: 'Values Assessment' },
       { key: 'education_muskaan_assessment', label: 'Muskaan Skill Assessment' },
     ]
@@ -194,7 +199,7 @@ export default function AddDataPage() {
   const isAdmin = user?.role === 'super_admin' || user?.role === 'admin';
 
   // Tab mode
-  const [mode, setMode] = useState('single'); // 'single' | 'bulk'
+  const [mode, setMode] = useState('live'); // 'live' | 'single' | 'bulk' | 'manage'
 
   // Table selection
   const [selectedTable, setSelectedTable] = useState('');
@@ -221,6 +226,17 @@ export default function AddDataPage() {
   const [editFormData, setEditFormData] = useState({});
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editResult, setEditResult] = useState(null);
+
+  const [liveSheets, setLiveSheets] = useState([]);
+  const [liveSheet, setLiveSheet] = useState('');
+  const [liveYear, setLiveYear] = useState(String(new Date().getFullYear()));
+  const [liveFrom, setLiveFrom] = useState('');
+  const [liveTo, setLiveTo] = useState('');
+  const [liveDiseaseId, setLiveDiseaseId] = useState('');
+  const [liveRecords, setLiveRecords] = useState([]);
+  const [liveMeta, setLiveMeta] = useState(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState('');
 
   // Compute visible categories
   const visibleCategories = Object.entries(TABLE_MENU).filter(([key]) => {
@@ -261,15 +277,50 @@ export default function AddDataPage() {
     setLoadingManual(true);
     setManageError('');
     try {
-      const res = await axios.get(`/api/data/list?table=${table}`);
+      const res = await axios.get(`/api/data/list?table=${table}&source=all`);
       setManualRecords(res.data.records || []);
     } catch (err) {
-      setManageError(err.response?.data?.error || 'Failed to fetch manual records.');
+      setManageError(err.response?.data?.error || 'Failed to fetch stored records.');
       setManualRecords([]);
     } finally {
       setLoadingManual(false);
     }
   }, []);
+
+  useEffect(() => {
+    const loadSheets = async () => {
+      try {
+        const res = await axios.get('/api/php/query');
+        setLiveSheets(res.data.sheets || []);
+      } catch (err) {
+        console.error('Failed to load live sheets', err);
+      }
+    };
+    loadSheets();
+  }, []);
+
+  const selectedLive = liveSheets.find((s) => s.sheet === liveSheet);
+
+  const fetchLiveRecords = async () => {
+    if (!liveSheet) return;
+    setLiveLoading(true);
+    setLiveError('');
+    setLiveMeta(null);
+    try {
+      const payload = { sheet: liveSheet, year: liveYear };
+      if (liveFrom) payload.from_date = liveFrom;
+      if (liveTo) payload.to_date = liveTo;
+      if (liveDiseaseId) payload.disease_id = liveDiseaseId;
+      const res = await axios.post('/api/php/query', payload);
+      setLiveRecords(res.data.records || []);
+      setLiveMeta(res.data);
+    } catch (err) {
+      setLiveRecords([]);
+      setLiveError(err.response?.data?.error || 'Live fetch failed.');
+    } finally {
+      setLiveLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedTable) {
@@ -482,10 +533,105 @@ export default function AddDataPage() {
       {/* Header */}
       <div className="section-header">
         <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Add Data</h2>
-        <p className="section-sub">Insert records into Health, Livelihood, or Education modules</p>
+        <p className="section-sub">Live jubicare tables, plus manual Postgres insert</p>
       </div>
 
+      <div className="tab-list" style={{ marginBottom: '16px' }}>
+        <button
+          className={`tab-btn ${mode === 'live' ? 'active' : ''}`}
+          onClick={() => setMode('live')}
+        >
+          Live from API
+        </button>
+        <button
+          className={`tab-btn ${mode === 'single' || mode === 'bulk' || mode === 'manage' ? 'active' : ''}`}
+          onClick={() => setMode('single')}
+        >
+          Manual / Postgres
+        </button>
+      </div>
+
+      {mode === 'live' && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-body">
+            <p className="section-sub" style={{ marginBottom: '12px' }}>
+              Reads jubicare directly (JWT stays on this app). Appointments and patients use a short date window — PHP 500s on a full year.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Sheet</label>
+                <select className="form-control" value={liveSheet} onChange={(e) => { setLiveSheet(e.target.value); setLiveRecords([]); setLiveError(''); }}>
+                  <option value="">— Choose a live sheet —</option>
+                  {['health', 'livelihood', 'education'].map((theme) => (
+                    <optgroup key={theme} label={theme}>
+                      {liveSheets.filter((s) => s.thematic === theme).map((s) => (
+                        <option key={s.sheet} value={s.sheet}>{s.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Calendar year</label>
+                <input className="form-control" value={liveYear} onChange={(e) => setLiveYear(e.target.value)} placeholder="2025" />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">from_date</label>
+                <input className="form-control" value={liveFrom} onChange={(e) => setLiveFrom(e.target.value)} placeholder="YYYY-MM-DD (optional)" />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">to_date</label>
+                <input className="form-control" value={liveTo} onChange={(e) => setLiveTo(e.target.value)} placeholder="YYYY-MM-DD (optional)" />
+              </div>
+              {selectedLive?.needsDiseaseId && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">disease_id</label>
+                  <input className="form-control" value={liveDiseaseId} onChange={(e) => setLiveDiseaseId(e.target.value)} placeholder="from disease summary" />
+                </div>
+              )}
+            </div>
+            {selectedLive?.caption && <p className="kpi-caption">{selectedLive.caption}</p>}
+            <button className="btn btn-primary" onClick={fetchLiveRecords} disabled={!liveSheet || liveLoading} style={{ marginTop: '12px' }}>
+              {liveLoading ? 'Fetching…' : 'Fetch live rows'}
+            </button>
+            {liveError && <p className="kpi-caption" style={{ color: 'var(--danger)', marginTop: '8px' }}>{liveError}</p>}
+            {liveMeta && (
+              <p className="kpi-caption" style={{ marginTop: '8px' }}>
+                {liveMeta.endpoint} · {liveMeta.count} rows
+                {liveMeta.body ? ` · ${JSON.stringify(liveMeta.body)}` : ''}
+              </p>
+            )}
+            {liveRecords.length > 0 && (
+              <div className="table-scroll" style={{ marginTop: '16px', maxHeight: '480px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(liveRecords[0]).map((col) => (
+                        <th key={col}>{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveRecords.map((row, i) => (
+                      <tr key={i}>
+                        {Object.keys(liveRecords[0]).map((col) => (
+                          <td key={col}>{row[col] == null ? '' : String(row[col])}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!liveLoading && liveSheet && liveRecords.length === 0 && !liveError && liveMeta && (
+              <div className="empty-state"><strong>No rows for this window</strong></div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Table Selector */}
+      {mode !== 'live' && (
       <div className="card" style={{ marginBottom: '24px' }}>
         <div className="card-body">
           <div className="form-group" style={{ maxWidth: '480px', marginBottom: 0 }}>
@@ -508,9 +654,10 @@ export default function AddDataPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Mode Tabs */}
-      {selectedTable && (
+      {mode !== 'live' && selectedTable && (
         <>
           <div className="tab-list">
             <button
@@ -532,7 +679,7 @@ export default function AddDataPage() {
               onClick={() => { setMode('manage'); fetchManualRecords(selectedTable); }}
               id="tab-manage-data"
             >
-              🛠️ Manage Added Data
+              🛠️ Postgres rows (incl. synced)
             </button>
           </div>
 
@@ -1021,7 +1168,7 @@ export default function AddDataPage() {
       )}
 
       {/* Empty state */}
-      {!selectedTable && (
+      {!selectedTable && mode !== 'live' && (
         <div className="card" style={{ textAlign: 'center', padding: '48px' }}>
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
           <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: 'var(--text)' }}>

@@ -11,6 +11,7 @@ export async function GET(req) {
 
   const { searchParams } = new URL(req.url);
   const table = searchParams.get('table');
+  const source = searchParams.get('source') || 'all';
   if (!table) {
     return NextResponse.json({ error: 'Missing "table" parameter' }, { status: 400 });
   }
@@ -43,7 +44,8 @@ export async function GET(req) {
     const query = `
       SELECT t.*, t.added_by AS added_by_username 
       FROM "${table}" t
-      WHERE t.added_by IS NOT NULL AND t.added_by != 'api'
+      ${source === 'manual' ? "WHERE t.added_by IS NOT NULL AND t.added_by != 'api'" : ''}
+      ${source === 'api' ? "WHERE t.added_by = 'api'" : ''}
       ORDER BY t."${orderCol}" DESC
       LIMIT 500
     `;

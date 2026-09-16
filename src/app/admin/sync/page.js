@@ -26,11 +26,11 @@ export default function SyncLogsPage() {
     fetchLogs();
   }, [fetchLogs]);
 
-  const triggerSync = async () => {
+  const triggerSync = async (force = false) => {
     setSyncing(true);
     setSyncMsg('');
     try {
-      const response = await axios.post('/api/admin/sync/trigger');
+      const response = await axios.post('/api/admin/sync/trigger', { force });
       setSyncMsg(response.data.message || 'Background sync started.');
       setTimeout(fetchLogs, 5000);
     } catch (error) {
@@ -62,18 +62,27 @@ export default function SyncLogsPage() {
         <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Manual Sync</h3></div>
         <div className="card-body">
           <p className="text-muted" style={{ marginBottom: '1rem', color: '#64748b' }}>
-            Triggers a full data pull from all source APIs (health, livelihood, education). 
-            Runs in the background — records will appear in the log below once processed.
+            Incremental pulls new rows. Full restack re-reads from HEALTH_SYNC_START (keep users/roles — truncate API tables only).
+            Runs in the background — check the log below.
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             {isSuperAdmin ? (
-              <button 
-                onClick={triggerSync}
-                disabled={syncing}
-                className="btn btn-primary"
-              >
-                {syncing ? 'Starting Sync...' : 'Trigger Sync'}
-              </button>
+              <>
+                <button
+                  onClick={() => triggerSync(false)}
+                  disabled={syncing}
+                  className="btn btn-primary"
+                >
+                  {syncing ? 'Starting Sync...' : 'Trigger incremental sync'}
+                </button>
+                <button
+                  onClick={() => triggerSync(true)}
+                  disabled={syncing}
+                  className="btn btn-secondary"
+                >
+                  Full restack sync
+                </button>
+              </>
             ) : (
               <p className="text-muted" style={{ color: '#64748b' }}>Only super_admin can trigger a manual sync.</p>
             )}
