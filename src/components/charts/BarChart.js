@@ -1,70 +1,37 @@
 'use client';
 
 import React from 'react';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js';
 import { Bar } from 'react-chartjs-2';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
+import { BRAND_SERIES, baseOptions } from '../../lib/chartTheme';
 
 const BarChart = ({ data, title, onClick }) => {
+  const themed = {
+    ...data,
+    datasets: (data?.datasets || []).map((ds, i) => ({
+      ...ds,
+      backgroundColor: ds.backgroundColor || BRAND_SERIES[i % BRAND_SERIES.length],
+      borderRadius: ds.borderRadius ?? 6
+    }))
+  };
+
   const options = {
-    responsive: true,
+    ...baseOptions,
     onClick: (event, elements) => {
       if (onClick && elements.length > 0) {
         const { index, datasetIndex } = elements[0];
-        const label = data.labels[index];
-        const value = data.datasets[datasetIndex].data[index];
-        const datasetLabel = data.datasets[datasetIndex].label;
+        const label = themed.labels[index];
+        const value = themed.datasets[datasetIndex].data[index];
+        const datasetLabel = themed.datasets[datasetIndex].label;
         onClick(label, datasetLabel, index, value);
       }
     },
     plugins: {
-      legend: {
-        position: 'top',
-        labels: {
-          usePointStyle: true,
-          padding: 20,
-          font: { size: 12, weight: '500' }
-        }
-      },
-      title: {
-        display: !!title,
-        text: title,
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        grid: {
-          display: true,
-          drawBorder: false,
-          color: '#f1f5f9'
-        }
-      },
-      x: {
-        grid: {
-          display: false
-        }
-      }
+      ...baseOptions.plugins,
+      title: { display: !!title, text: title, color: '#1B2A4A' }
     }
   };
 
-  return <Bar options={options} data={data} />;
+  return <Bar options={options} data={themed} />;
 };
 
 export default BarChart;

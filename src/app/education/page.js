@@ -2,23 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import {
-  Chart as ChartJS,
-  CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend
-} from 'chart.js';
-import { Bar } from 'react-chartjs-2';
+import RankingBar from '../../components/charts/RankingBar';
+import GroupedBar from '../../components/charts/GroupedBar';
 import DrilldownModal from '../../components/DrilldownModal';
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
-
-const PALETTE = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#dbeafe'];
+import { LIME, NAVY, SKY } from '../../lib/chartTheme';
 
 export default function EducationPage() {
   const [data, setData] = useState({
     activities: [],
     schools: [],
     prePost: { data: [] },
-    muskaan: { data: [] }
+    muskaan: { data: [] },
+    mix: { data: [] }
   });
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
@@ -32,7 +27,9 @@ export default function EducationPage() {
 
   const fetchAllData = React.useCallback(async () => {
     setLoading(true);
-    const query = new URLSearchParams(filters).toString();
+    const query = new URLSearchParams(
+      Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
+    ).toString();
     try {
       const [activities, schools, prePost, muskaan] = await Promise.all([
         axios.get(`/api/education/activities?${query}`),
@@ -40,11 +37,18 @@ export default function EducationPage() {
         axios.get(`/api/education/pre_post_values?${query}`),
         axios.get(`/api/education/muskaan_performance?${query}`)
       ]);
+      let mix = { data: { status: 'no_data', data: [] } };
+      try {
+        mix = await axios.get(`/api/education/mixprogram?${query}`);
+      } catch (e) {
+        mix = { data: { status: 'no_data', data: [] } };
+      }
       setData({
         activities: activities.data,
         schools: schools.data,
         prePost: prePost.data,
-        muskaan: muskaan.data
+        muskaan: muskaan.data,
+        mix: mix.data
       });
     } catch (err) {
       console.error('Education data load failed');
@@ -69,136 +73,120 @@ export default function EducationPage() {
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
       <div className="spinner"></div>
-      {/* <span style={{ marginLeft: '12px', color: '#64748b', fontWeight: 500 }}>Synchronizing Education Data...</span> */}
     </div>
   );
 
-  // Process activities data for chart
-  const activityYearMap = {};
-  data.activities.forEach(r => {
-    if (!activityYearMap[r.academic_year]) activityYearMap[r.academic_year] = { sessions: 0, students: 0 };
-    activityYearMap[r.academic_year].sessions += r.sessions;
-    activityYearMap[r.academic_year].students += r.students;
+  const byProgram = {};
+  (data.activities || []).forEach((r) => {
+    if (!byProgram[r.program]) byProgram[r.program] = 0;
+    byProgram[r.program] += r.students || 0;
   });
-  const activityYears = Object.keys(activityYearMap).sort();
-
-  // Process schools comparison data
-  const schoolLabels = data.schools.map(r => `${r.academic_year} / ${r.program}`);
+  const programItems = Object.entries(byProgram).map(([label, value]) => ({ label, value }));
+  const totalStudents = programItems.reduce((s, r) => s + r.value, 0);
 
   return (
     <div>
-      {/* Header */}
       <div className="section-header">
         <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Education Programme</h2>
-        <p className="section-sub">Activities, values assessment & Muskaan skill outcomes</p>
+        <p className="section-sub">Students by trimmed programme name. Activity type is not in the live schema.</p>
       </div>
 
-      {/* Activities Chart */}
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Programme Sessions & Students by Year</h3>
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-body">
+            <div className="kpi-value">{totalStudents.toLocaleString('en-IN')}</div>
+            <div className="kpi-label">Students (SUM student_count)</div>
+            <p className="kpi-caption">TRIM(program_name). Not grouped by activity type.</p>
+          </div>
         </div>
-        <div className="card-body">
-          <div className="h-[300px]">
-            <Bar
-              data={{
-                labels: activityYears,
-                datasets: [
-                  { label: 'Sessions', data: activityYears.map(y => activityYearMap[y].sessions), backgroundColor: PALETTE[0] },
-                  { label: 'Students', data: activityYears.map(y => activityYearMap[y].students), backgroundColor: PALETTE[2] }
-                ]
-              }}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                onClick: (e, els) => {
-                  if (els.length > 0) {
-                    handleDrilldown('activity', activityYears[els[0].index]);
-                  }
-                },
-                plugins: { legend: { position: 'bottom' } }
-              }}
-            />
+        <div className="kpi-card">
+          <div className="kpi-body">
+            <div className="kpi-value">{(data.activities || []).length}</div>
+            <div className="kpi-label">Programme × year rows</div>
           </div>
         </div>
       </div>
 
-      {/* Schools Comparison Chart */}
       <div className="card" style={{ marginBottom: '24px' }}>
         <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Schools & Students by Academic Year</h3>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Students by programme · trimmed program_name</h3>
         </div>
         <div className="card-body">
-          <div className="h-[300px]">
-            <Bar
-              data={{
-                labels: schoolLabels,
-                datasets: [
-                  { label: 'Schools', data: data.schools.map(r => r.school_count), backgroundColor: PALETTE[1] },
-                  { label: 'Students', data: data.schools.map(r => r.total_students), backgroundColor: PALETTE[3] }
-                ]
-              }}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                onClick: (e, els) => {
-                  if (els.length > 0) {
-                    const r = data.schools[els[0].index];
-                    handleDrilldown('school', schoolLabels[els[0].index], { academic_year: r.academic_year, program_name: r.program });
-                  }
-                },
-                plugins: { legend: { position: 'bottom' } }
-              }}
-            />
-          </div>
+          <RankingBar
+            items={programItems}
+            color={LIME}
+            caption="Trailing spaces in KKP vs KKP are trimmed at sync."
+            onBarClick={(label) => handleDrilldown('activity', label)}
+          />
         </div>
       </div>
 
-      {/* Values Assessment */}
       <div className="card" style={{ marginBottom: '24px' }}>
         <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Values Assessment — Pre vs Post Scores</h3>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Schools and students by academic year</h3>
         </div>
         <div className="card-body">
-          {data.prePost.data.length === 0 ? (
+          <GroupedBar
+            labels={(data.schools || []).map(r => `${r.academic_year} / ${r.program}`)}
+            datasets={[
+              { label: 'Schools', data: (data.schools || []).map(r => r.school_count), color: SKY },
+              { label: 'Students', data: (data.schools || []).map(r => r.total_students), color: NAVY }
+            ]}
+            caption="Academic year is derived from created_at when the API does not send one."
+            onBarClick={(label, idx) => {
+              const r = data.schools[idx];
+              if (r) handleDrilldown('school', label, { academic_year: r.academic_year, program_name: r.program });
+            }}
+          />
+        </div>
+      </div>
+
+      {data.mix?.status === 'ok' && data.mix.data?.length > 0 && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Mixprogramme schools</h3>
+          </div>
+          <div className="card-body">
+            <RankingBar
+              items={data.mix.data.map(r => ({ label: r.school_name, value: r.students_total }))}
+              color={NAVY}
+              caption="Optional mixprogram.php rows. theme_touched is unrelated text, not an activity type."
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{ marginBottom: '24px' }}>
+        <div className="card-header">
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Values assessment — pre vs post</h3>
+        </div>
+        <div className="card-body">
+          {data.prePost?.status === 'no_data' || !data.prePost?.data?.length ? (
             <div className="empty-state">
               <strong>Assessment data not yet available</strong>
+              <p className="chart-caption">{data.prePost?.message || 'education_assessment is not in the live extract.'}</p>
             </div>
           ) : (
-            <div className="h-[280px]">
-              <Bar
-                data={{
-                  labels: data.prePost.data.map(r => r.value),
-                  datasets: [
-                    { label: 'Pre Score', data: data.prePost.data.map(r => r.avg_pre), backgroundColor: PALETTE[4] },
-                    { label: 'Post Score', data: data.prePost.data.map(r => r.avg_post), backgroundColor: PALETTE[2] }
-                  ]
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  onClick: (e, els) => {
-                    if (els.length > 0) {
-                      handleDrilldown('assessment', data.prePost.data[els[0].index].value);
-                    }
-                  },
-                  plugins: { legend: { position: 'bottom' } }
-                }}
-              />
-            </div>
+            <GroupedBar
+              labels={data.prePost.data.map(r => r.value)}
+              datasets={[
+                { label: 'Pre score', data: data.prePost.data.map(r => r.avg_pre), color: SKY },
+                { label: 'Post score', data: data.prePost.data.map(r => r.avg_post), color: NAVY }
+              ]}
+            />
           )}
         </div>
       </div>
 
-      {/* Muskaan Performance */}
       <div className="card">
         <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan — Skill Level Outcomes</h3>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan — skill level outcomes</h3>
         </div>
         <div className="card-body">
-          {data.muskaan.data.length === 0 ? (
+          {data.muskaan?.status === 'no_data' || !data.muskaan?.data?.length ? (
             <div className="empty-state">
               <strong>Muskaan assessment data not yet available</strong>
+              <p className="chart-caption">{data.muskaan?.message || 'education_muskaan_assessment is not in the live extract.'}</p>
             </div>
           ) : (
             <div className="table-scroll">
@@ -213,11 +201,7 @@ export default function EducationPage() {
                 </thead>
                 <tbody>
                   {data.muskaan.data.map((r, i) => (
-                    <tr
-                      key={i}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => handleDrilldown('muskaan', r.skill_area)}
-                    >
+                    <tr key={i} style={{ cursor: 'pointer' }} onClick={() => handleDrilldown('muskaan', r.skill_area)}>
                       <td>{r.skill_area}</td>
                       <td>{r.pre_level}</td>
                       <td>{r.post_level}</td>

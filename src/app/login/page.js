@@ -40,7 +40,7 @@ export default function LoginPage() {
     <div className="login-screen">
       <div className="login-card">
         <div className="login-logo-box">
-          <i className="ph ph-squares-four ph-fill" style={{ fontSize: '28px', color: '#e11d48' }}></i>
+          <img src="/logo.png" alt="Jubilant Bhartia Foundation" />
         </div>
 
         <h1 className="login-heading">Jubilant Platform</h1>

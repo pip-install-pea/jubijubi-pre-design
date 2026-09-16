@@ -21,8 +21,8 @@ const AppContent = ({ children }) => {
 
   if (loading) {
     return (
-      <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+      <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', backgroundColor: 'var(--bg)' }}>
           <div className="spinner"></div>
           {/* <span style={{ fontSize: '13px', fontWeight: 600, color: '#64748b' }}>Synchronizing Platform...</span> */}
         </div>

@@ -1,7 +1,11 @@
 import { fetchall, scalar } from './db.js';
-import { buildFilters, whereStr } from './analytics.js';
+import { buildFilters, whereStr, validDateClause } from './analytics.js';
 
-const PROGRAM_COST_LIVELIHOOD = 500000;
+const GEO = { module: 'livelihood' };
+
+function lf(filters, options) {
+  return buildFilters(filters, { ...GEO, ...options });
+}
 
 function parseSalesGeneratedAverage(raw) {
   if (!raw || typeof raw !== 'string') return null;
@@ -67,10 +71,11 @@ async function _incomeBuckets(extraWhere = '', params = {}, placedOnly = false) 
 }
 
 export async function getSkillingBeneficiaries(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
     district_col: 'district_id',
-    trade_col: 'training_stream_id'
+    trade_col: 'training_stream_id',
+    date_col: 'created_at'
   });
   const w = whereStr(clauses);
 
@@ -79,9 +84,10 @@ export async function getSkillingBeneficiaries(filters) {
     params
   );
 
-  const { clauses: mClauses, params: mParams } = buildFilters(filters, {
+  const { clauses: mClauses, params: mParams } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
   });
   const mw = whereStr(mClauses);
 
@@ -102,22 +108,25 @@ export async function getSkillingBeneficiaries(filters) {
   }));
 
   return {
+    roster_count: total,
     total_trained: total,
-    status_breakdown: statusBreakdown
+    status_breakdown: statusBreakdown,
+    caption: 'Roster count of skilltracking_persons. Do not read as “trained” until L1 is defined. Work status is the monitored subset only.'
   };
 }
 
 export async function getIncomeDistribution(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
   });
   const w = whereStr(clauses);
   return await _incomeBuckets(w, params, false);
 }
 
 export async function getSkillingDemographics(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     date_col: 'sp.created_at',
     state_col: 'sp.state_id',
     district_col: 'sp.district_id',
@@ -169,26 +178,14 @@ export async function getSkillingDemographics(filters) {
     "45+":   ageRow.a45plus,
   };
 
-  const andW = w ? 'AND' : 'WHERE';
-  const totalIncome = await scalar(
-    `SELECT COALESCE(SUM(CASE WHEN sm.monthly_income ~ '^[0-9]+$' THEN sm.monthly_income::bigint ELSE 0 END), 0)::bigint
-     ${joinClause}
-     ${andW} sm.monthly_income IS NOT NULL AND sm.monthly_income != ''`,
-    params
-  );
-
-  const sroi = PROGRAM_COST_LIVELIHOOD ? parseFloat((totalIncome / PROGRAM_COST_LIVELIHOOD).toFixed(4)) : 0;
-
   return {
     gender_breakdown: genderBreakdown,
-    age_brackets: ageBrackets,
-    sroi,
-    sroi_formula: 'SUM(monthly_income post-training) / PROGRAM_COST_LIVELIHOOD'
+    age_brackets: ageBrackets
   };
 }
 
 export async function getBeneficiariesByTrade(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'sp.state_id',
     district_col: 'sp.district_id'
   });
@@ -210,7 +207,7 @@ export async function getBeneficiariesByTrade(filters) {
 }
 
 export async function getSessionsByTrade(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'bl.state_id',
     district_col: 'bl.district_id'
   });
@@ -232,9 +229,10 @@ export async function getSessionsByTrade(filters) {
 }
 
 export async function getPlacementStatus(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
   });
   const w = whereStr(clauses);
 
@@ -260,20 +258,21 @@ export async function getPlacementStatus(filters) {
 }
 
 export async function getPlacementIncomeRange(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
   });
   const w = whereStr(clauses);
   return await _incomeBuckets(w, params, true);
 }
 
 export async function getYoYIncome(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
     district_col: 'district_id'
   });
-  clauses.push("date_of_monitor IS NOT NULL AND date_of_monitor != ''");
+  clauses.push(validDateClause('date_of_monitor'));
   const w = whereStr(clauses);
 
   const rows = await fetchall(
@@ -296,7 +295,7 @@ export async function getYoYIncome(filters) {
 }
 
 export async function getMentorshipStats(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
     district_col: 'district_id'
   });
@@ -326,9 +325,10 @@ export async function getMentorshipStats(filters) {
 }
 
 export async function getMarketAccessStats(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    financial_year_col: 'financial_year'
   });
   const maW = whereStr(clauses);
 
@@ -401,6 +401,8 @@ export async function getMarketAccessStats(filters) {
     agency_count,
     total_sales_generated,
     avg_sales_generated,
+    sales_is_parsed_estimate: true,
+    sales_caption: 'Parsed estimate from sales_generated_average text (e.g. “1 LAKH +”), not an audited total.',
     sales_generated_average_breakdown,
     market_access_type_breakdown,
     top_agencies,
@@ -409,9 +411,10 @@ export async function getMarketAccessStats(filters) {
 }
 
 export async function getFundingStats(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'es.state_id',
-    district_col: 'es.district_id'
+    district_col: 'es.district_id',
+    financial_year_col: 'em.financial_year'
   });
   const w = whereStr(clauses);
 
@@ -456,9 +459,10 @@ export async function getFundingStats(filters) {
 }
 
 export async function getPrePostStats(filters) {
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = lf(filters, {
     state_col: 'state_id',
-    district_col: 'district_id'
+    district_col: 'district_id',
+    financial_year_col: 'financial_year'
   });
   const w = whereStr(clauses);
 

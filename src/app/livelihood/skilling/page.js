@@ -3,16 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
-import {
-  Chart as ChartJS,
-  CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend, PointElement, LineElement
-} from 'chart.js';
-import { Bar, Doughnut } from 'react-chartjs-2';
+import RankingBar from '../../../components/charts/RankingBar';
+import BrandDoughnut from '../../../components/charts/BrandDoughnut';
+import ColumnBar from '../../../components/charts/ColumnBar';
+import GroupedBar from '../../../components/charts/GroupedBar';
 import DrilldownModal from '../../../components/DrilldownModal';
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend, PointElement, LineElement);
-
-const PALETTE = ['#e11d48', '#f43f5e', '#fb7185', '#fda4af', '#fff1f2'];
+import { NAVY, SKY, GOLD, LIME } from '../../../lib/chartTheme';
 
 export default function SkillingPage() {
   const [data, setData] = useState(null);
@@ -28,7 +24,9 @@ export default function SkillingPage() {
 
   const fetchData = React.useCallback(async () => {
     setLoading(true);
-    const query = new URLSearchParams(filters).toString();
+    const query = new URLSearchParams(
+      Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
+    ).toString();
     try {
       const [beneficiaries, income, demographics, byTrade, sessions, prePost] = await Promise.all([
         axios.get(`/api/livelihood/skilling/beneficiaries?${query}`),
@@ -57,7 +55,7 @@ export default function SkillingPage() {
     fetchData();
   }, [fetchData]);
 
-  const fmt = (n) => n?.toLocaleString() || '—';
+  const fmt = (n) => (n || n === 0) ? Number(n).toLocaleString('en-IN') : '—';
 
   const handleDrilldown = (type, value = null) => {
     setModal({
@@ -76,52 +74,26 @@ export default function SkillingPage() {
 
   const prePostData = (() => {
     if (!data?.prePost || data.prePost.length === 0) return null;
-    
-    // Group by trade_name
     const tradesMap = {};
     data.prePost.forEach(r => {
-      if (!tradesMap[r.trade_name]) {
-        tradesMap[r.trade_name] = { pre: 0, post: 0 };
-      }
-      if (r.assessment_type === 'PRE') {
-        tradesMap[r.trade_name].pre += r.trained || 0;
-      } else if (r.assessment_type === 'POST') {
-        tradesMap[r.trade_name].post += r.trained || 0;
-      }
+      if (!tradesMap[r.trade_name]) tradesMap[r.trade_name] = { pre: 0, post: 0 };
+      if (r.assessment_type === 'PRE') tradesMap[r.trade_name].pre += r.trained || 0;
+      else if (r.assessment_type === 'POST') tradesMap[r.trade_name].post += r.trained || 0;
     });
-
-    const labels = Object.keys(tradesMap);
-    const preTrained = labels.map(l => tradesMap[l].pre);
-    const postTrained = labels.map(l => tradesMap[l].post);
-
     return {
-      labels,
-      datasets: [
-        {
-          label: 'Pre-Assessment Trained',
-          data: preTrained,
-          backgroundColor: '#fda4af',
-          borderRadius: 4
-        },
-        {
-          label: 'Post-Assessment Trained',
-          data: postTrained,
-          backgroundColor: '#e11d48',
-          borderRadius: 4
-        }
-      ]
+      labels: Object.keys(tradesMap),
+      pre: Object.keys(tradesMap).map(l => tradesMap[l].pre),
+      post: Object.keys(tradesMap).map(l => tradesMap[l].post)
     };
   })();
 
   return (
     <div>
-      {/* Header */}
       <div className="section-header">
         <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Livelihood — Skilling</h2>
-        <p className="section-sub">Empowerment through skilling, placement and enterprise support</p>
+        <p className="section-sub">Roster, monitored work status, current income, and batches by trade</p>
       </div>
 
-      {/* Tabs */}
       <div className="page-tabs" style={{ marginBottom: '24px' }}>
         <Link href="/livelihood/skilling" className="tab tab--active">Skilling</Link>
         <Link href="/livelihood/placement" className="tab">Placement</Link>
@@ -133,15 +105,9 @@ export default function SkillingPage() {
           <div className="kpi-grid">
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
               <div className="kpi-body">
-                <div className="kpi-value">{fmt(data.beneficiaries?.total_trained)}</div>
-                <div className="kpi-label" style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>Total Trained</div>
-              </div>
-            </div>
-            <div className="kpi-card">
-              <div className="kpi-body">
-                <div className="kpi-value">{data.demographics?.sroi?.toFixed(2) || '—'}x</div>
-                <div className="kpi-label" style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>SROI</div>
-                <div className="kpi-sub" style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>income ÷ programme cost</div>
+                <div className="kpi-value">{fmt(data.beneficiaries?.roster_count ?? data.beneficiaries?.total_trained)}</div>
+                <div className="kpi-label">Skill roster</div>
+                <p className="kpi-caption">{data.beneficiaries?.caption}</p>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
@@ -149,132 +115,88 @@ export default function SkillingPage() {
                 <div className="kpi-value">
                   {fmt(data.demographics?.gender_breakdown?.find(g => g.gender === 'Female' || g.gender === 'F')?.count)}
                 </div>
-                <div className="kpi-label" style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>Women Impacted</div>
+                <div className="kpi-label">Women on roster</div>
+                <p className="kpi-caption">Livelihood gender codes are Male/Female, not F/M.</p>
               </div>
             </div>
           </div>
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Work Status Breakdown</h3></div>
+              <div className="card-header"><h3>Work status · monitored subset</h3></div>
               <div className="card-body">
-                <div className="h-[280px]">
-                  <Doughnut
-                    data={{
-                      labels: data.beneficiaries?.status_breakdown?.map(r => r.status) || [],
-                      datasets: [{ data: data.beneficiaries?.status_breakdown?.map(r => r.count) || [], backgroundColor: PALETTE }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: { legend: { position: 'bottom' } },
-                      onClick: (e, els) => els.length && handleDrilldown('work_status', data.beneficiaries?.status_breakdown?.[els[0].index]?.status)
-                    }}
-                  />
-                </div>
+                <BrandDoughnut
+                  labels={data.beneficiaries?.status_breakdown?.map(r => r.status) || []}
+                  values={data.beneficiaries?.status_breakdown?.map(r => r.count) || []}
+                  colors={[NAVY, SKY, GOLD]}
+                  caption="Monitored subset (skilltracking_monitor), not the full roster. Sample is Working / Not Working only."
+                  onSliceClick={(label) => handleDrilldown('work_status', label)}
+                />
               </div>
             </div>
             <div className="card">
-              <div className="card-header"><h3>Income Distribution</h3></div>
+              <div className="card-header"><h3>Current monthly income buckets</h3></div>
               <div className="card-body">
-                <div className="h-[280px]">
-                  <Bar
-                    data={{
-                      labels: ['₹0–5K', '₹5K–10K', '₹10K+'],
-                      datasets: [{ data: [data.income?.['0_5000'], data.income?.['5001_10000'], data.income?.['10001_plus']], backgroundColor: PALETTE }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: { legend: { display: false } },
-                      onClick: (e, els) => {
-                        const labels = ['0_5000', '5001_10000', '10001_plus'];
-                        if (els.length) handleDrilldown('income_range', labels[els[0].index]);
-                      }
-                    }}
-                  />
-                </div>
+                <ColumnBar
+                  labels={['₹0–5K', '₹5K–10K', '₹10K+']}
+                  values={[data.income?.['0_5000'], data.income?.['5001_10000'], data.income?.['10001_plus']]}
+                  colors={[NAVY, SKY, GOLD]}
+                  caption="Current monthly_income stock, not income increase. No baseline in the schema."
+                  onBarClick={(_, __, idx) => {
+                    const labels = ['0_5000', '5001_10000', '10001_plus'];
+                    handleDrilldown('income_range', labels[idx]);
+                  }}
+                />
               </div>
             </div>
           </div>
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Gender Breakdown</h3></div>
+              <div className="card-header"><h3>Gender · roster</h3></div>
               <div className="card-body">
-                <div className="h-[280px]">
-                  <Doughnut
-                    data={{
-                      labels: data.demographics?.gender_breakdown?.map(r => r.gender) || [],
-                      datasets: [{ data: data.demographics?.gender_breakdown?.map(r => r.count) || [], backgroundColor: PALETTE }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: { legend: { position: 'bottom' } },
-                      onClick: (e, els) => els.length && handleDrilldown('gender', data.demographics?.gender_breakdown?.[els[0].index]?.gender)
-                    }}
-                  />
-                </div>
+                <BrandDoughnut
+                  labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
+                  values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
+                  colors={[NAVY, SKY]}
+                  onSliceClick={(label) => handleDrilldown('gender', label)}
+                />
               </div>
             </div>
             <div className="card">
-              <div className="card-header"><h3>Age Brackets</h3></div>
+              <div className="card-header"><h3>Age brackets · roster</h3></div>
               <div className="card-body">
-                <div className="h-[280px]">
-                  <Bar
-                    data={{
-                      labels: data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : [],
-                      datasets: [{ data: data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : [], backgroundColor: PALETTE[2] }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: { legend: { display: false } },
-                      onClick: (e, els) => {
-                        const labels = Object.keys(data.demographics.age_brackets);
-                        if (els.length) handleDrilldown('age', labels[els[0].index]);
-                      }
-                    }}
-                  />
-                </div>
+                <ColumnBar
+                  labels={data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : []}
+                  values={data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : []}
+                  colors={[NAVY, SKY, GOLD, LIME, '#5B7FCF']}
+                  onBarClick={(label) => handleDrilldown('age', label)}
+                />
               </div>
             </div>
           </div>
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Beneficiaries by Trade</h3></div>
+              <div className="card-header"><h3>Roster by trade</h3></div>
               <div className="card-body">
-                <div className="h-[300px]">
-                  <Bar
-                    data={{
-                      labels: data.byTrade?.map(r => r.trade) || [],
-                      datasets: [{ data: data.byTrade?.map(r => r.count) || [], backgroundColor: PALETTE[0] }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      indexAxis: 'y',
-                      plugins: { legend: { display: false } },
-                      onClick: (e, els) => els.length && handleDrilldown('trade', data.byTrade?.[els[0].index]?.trade)
-                    }}
-                  />
-                </div>
+                <RankingBar
+                  items={(data.byTrade || []).map(r => ({ label: r.trade, value: r.count }))}
+                  color={NAVY}
+                  caption="training_stream_id → stream_name (API training_name)."
+                  onBarClick={(label) => handleDrilldown('trade', label)}
+                />
               </div>
             </div>
             <div className="card">
-              <div className="card-header"><h3>Batches by Trade</h3></div>
+              <div className="card-header"><h3>Batches by trade</h3></div>
               <div className="card-body">
-                <div className="h-[300px]">
-                  <Bar
-                    data={{
-                      labels: data.sessionsByTrade?.map(r => r.trade) || [],
-                      datasets: [{ data: data.sessionsByTrade?.map(r => r.batches) || [], backgroundColor: PALETTE[3] }]
-                    }}
-                    options={{
-                      maintainAspectRatio: false,
-                      indexAxis: 'y',
-                      plugins: { legend: { display: false } },
-                      onClick: (e, els) => els.length && handleDrilldown('trade', data.sessionsByTrade?.[els[0].index]?.trade)
-                    }}
-                  />
-                </div>
+                <RankingBar
+                  items={(data.sessionsByTrade || []).map(r => ({ label: r.trade, value: r.batches }))}
+                  color={LIME}
+                  caption="COUNT(skilltracking_batch_list), not mentorship sessions."
+                  onBarClick={(label) => handleDrilldown('trade', label)}
+                />
               </div>
             </div>
           </div>
@@ -282,29 +204,20 @@ export default function SkillingPage() {
           {prePostData && (
             <div className="card" style={{ marginTop: '24px' }}>
               <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Pre vs Post Assessment Outcomes</h3>
-                <span className="badge badge--success" style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', background: '#e11d48', color: 'white' }} onClick={() => handleDrilldown('pre_post')}>
-                  View Raw Data
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Pre vs post assessment headcount</h3>
+                <span className="badge badge--success" style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', background: 'var(--navy)', color: 'white' }} onClick={() => handleDrilldown('pre_post')}>
+                  View raw data
                 </span>
               </div>
               <div className="card-body">
-                <div className="h-[320px]">
-                  <Bar
-                    data={prePostData}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: { position: 'bottom' }
-                      },
-                      onClick: (e, els) => {
-                        if (els.length) {
-                          const assessmentType = els[0].datasetIndex === 0 ? 'PRE' : 'POST';
-                          handleDrilldown('pre_post', assessmentType);
-                        }
-                      }
-                    }}
-                  />
-                </div>
+                <GroupedBar
+                  labels={prePostData.labels}
+                  datasets={[
+                    { label: 'Pre-assessment trained', data: prePostData.pre, color: SKY },
+                    { label: 'Post-assessment trained', data: prePostData.post, color: NAVY }
+                  ]}
+                  caption="placement_status is an integer with no codebook — not a 4-way employment status."
+                />
               </div>
             </div>
           )}

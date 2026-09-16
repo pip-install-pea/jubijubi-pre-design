@@ -5,6 +5,16 @@ const API_BASE = 'https://jubicare.indevconsultancy.com/api/centralizeddashboard
 const BATCH_SIZE = 300;
 const MAX_TEXT_LEN = 1000;
 const HTML_RE = /<[^>]+>/g;
+const HEALTH_SYNC_START = process.env.HEALTH_SYNC_START || '2025-01-01';
+const HEALTH_SUMMARY_YEARS = (process.env.HEALTH_SUMMARY_YEARS || '2024,2025,2026')
+  .split(',')
+  .map((y) => y.trim())
+  .filter(Boolean);
+const MIXPROGRAM_ID = process.env.EDU_PROGRAM_ID || '5';
+const MIXPROGRAM_YEARS = (process.env.EDU_MIX_YEARS || '2024-25,2025-26')
+  .split(',')
+  .map((y) => y.trim())
+  .filter(Boolean);
 
 // Helper to sanitise API string values (remove tags and cap length)
 function _sanitise(val) {
@@ -54,6 +64,12 @@ function parseApiResponse(raw) {
     const keys = Object.keys(raw);
     if (keys.length > 0 && keys.every(k => skipKeys.has(k))) {
       return [];
+    }
+    // PHP envelopes often wrap a scalar object in .data
+    if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+      const inner = { ...raw.data };
+      if (raw.year != null && inner.year == null) inner.year = raw.year;
+      return [inner];
     }
     for (const val of Object.values(raw)) {
       if (Array.isArray(val)) {
@@ -108,6 +124,74 @@ async function writeSyncLog(moduleName, tableName, fetched, upserted, status, er
     ]);
   } catch (err) {
     console.error(`Failed to write sync log for ${tableName}:`, err);
+  }
+}
+
+async function ensureColumn(table, column, type = 'TEXT') {
+  await pool.query(`ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" ${type}`);
+}
+
+async function ensureEnvelopeTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS health_beneficiary_year (
+      year TEXT PRIMARY KEY,
+      total_beneficiary INTEGER,
+      total_village INTEGER,
+      total_state INTEGER,
+      total_adolescent_10_19 INTEGER,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS health_disease_summary (
+      id TEXT PRIMARY KEY,
+      year TEXT,
+      disease_id TEXT,
+      disease_name TEXT,
+      total_patients INTEGER,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS health_symptom_summary (
+      id TEXT PRIMARY KEY,
+      year TEXT,
+      symptom_id TEXT,
+      symptom_name TEXT,
+      total_patients INTEGER,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS education_mixprogram (
+      id TEXT PRIMARY KEY,
+      program_id TEXT,
+      sno TEXT,
+      location TEXT,
+      block TEXT,
+      school_name TEXT,
+      year TEXT,
+      students_male INTEGER,
+      students_female INTEGER,
+      students_total INTEGER,
+      teachers_reached INTEGER,
+      theme_touched TEXT,
+      class TEXT,
+      status TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  try {
+    await ensureColumn('education_program', 'activity_count', 'TEXT');
+    await ensureColumn('education_program', 'total_interventions', 'TEXT');
+  } catch (err) {
+    console.warn('[syncEngine] Could not add education_program extra columns:', err.message);
   }
 }
 
@@ -185,11 +269,29 @@ export const SYNC_PLANS = {
         id: 'program_id', program_name: 'program_name',
         state_id: 'state_id', district_id: 'district_id',
         no_of_school: 'school_count', no_of_students_participating: 'student_count',
+        activity_count: 'activity_count', total_interventions: 'total_interventions',
         academic_year: 'academic_year', status: 'status', created_at: 'created_at'
       }
     },
     {
+      table: 'education_mixprogram',
+      optional: true,
+      payload: { program_id: MIXPROGRAM_ID, year: MIXPROGRAM_YEARS[0] },
+      endpoint: 'mixprogram.php',
+      uniqueField: 'id',
+      yearPayloads: MIXPROGRAM_YEARS.map((year) => ({ program_id: MIXPROGRAM_ID, year })),
+      fieldMap: {
+        id: 'id', program_id: 'program_id', sno: 'sno', location: 'location',
+        block: 'block', school_name: 'school_name', year: 'year',
+        students_male: 'students_male', students_female: 'students_female',
+        students_total: 'students_total', teachers_reached: 'teachers_reached',
+        theme_touched: 'theme_touched', class: 'class', status: 'status',
+        created_at: 'created_at', updated_at: 'updated_at'
+      }
+    },
+    {
       table: 'education_assessment',
+      optional: true,
       payload: { module_type: 'education', project: 'education_program', table_name: 'education_assessment' },
       endpoint: 'education.php',
       uniqueField: 'assessment_id',
@@ -203,6 +305,7 @@ export const SYNC_PLANS = {
     },
     {
       table: 'education_muskaan_assessment',
+      optional: true,
       payload: { module_type: 'education', project: 'education_program', table_name: 'education_muskaan_assessment' },
       endpoint: 'education.php',
       uniqueField: 'assessment_id',
@@ -223,7 +326,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { id: 'source_id', name: 'name', del_action: 'del_action' }
     },
     {
@@ -233,7 +336,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { id: 'source_id', name: 'name', state_id: 'state_id', del_action: 'del_action' }
     },
     {
@@ -243,7 +346,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { id: 'source_id', name: 'name', district_id: 'district_id', del_action: 'del_action' }
     },
     {
@@ -253,7 +356,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { id: 'source_id', name: 'name', block_id: 'block_id', del_action: 'del_action' }
     },
     {
@@ -263,7 +366,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { id: 'source_id', disease_name: 'disease_name', del_action: 'del_action' }
     },
     {
@@ -273,7 +376,7 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: { partner_id: 'source_id', partner_name: 'name', active_status: 'del_action' }
     },
     {
@@ -283,7 +386,7 @@ export const SYNC_PLANS = {
       uniqueField: 'patient_id',
       useDateRange: true,
       dateColumn: 'created_at',
-      chunkSizeDays: 1,
+      chunkSizeDays: 31,
       fieldMap: {
         patient_id: 'patient_id', user_id: 'user_id', full_name: 'full_name',
         gender: 'gender', age: 'age', age_month: 'age_month', dob: 'dob',
@@ -305,7 +408,7 @@ export const SYNC_PLANS = {
       uniqueField: 'appointment_id',
       useDateRange: true,
       dateColumn: 'created_at',
-      chunkSizeDays: 1,
+      chunkSizeDays: 3,
       fieldMap: {
         appointment_id: 'appointment_id', profile_patient_id: 'profile_patient_id',
         symtom: 'symtom', bp_lower: 'bp_lower', bp_upper: 'bp_upper',
@@ -331,11 +434,45 @@ export const SYNC_PLANS = {
       uniqueField: 'source_id',
       useDateRange: true,
       dateColumn: 'synced_at',
-      chunkSizeDays: 90,
+      chunkSizeDays: 365,
       fieldMap: {
         id: 'source_id', full_name: 'doctor_name', degree: 'specialization',
         state_id: 'state_id', district_id: 'district_id',
         partner_id: 'partner_id', del_action: 'del_action'
+      }
+    },
+    {
+      table: 'health_beneficiary_year',
+      endpoint: 'health_beneficiary.php',
+      uniqueField: 'year',
+      yearPayloads: HEALTH_SUMMARY_YEARS.map((year) => ({ module_type: 'health', year })),
+      fieldMap: {
+        year: 'year',
+        total_beneficiary: 'total_beneficiary',
+        total_village: 'total_village',
+        total_state: 'total_state',
+        total_adolescent_10_19: 'total_adolescent_10_19'
+      }
+    },
+    {
+      table: 'health_disease_summary',
+      endpoint: 'health_desease.php',
+      uniqueField: 'id',
+      yearPayloads: HEALTH_SUMMARY_YEARS.map((year) => ({ module_type: 'health', year })),
+      fieldMap: {
+        id: 'id', year: 'year', disease_id: 'disease_id',
+        disease_name: 'disease_name', total_patients: 'total_patients'
+      }
+    },
+    {
+      table: 'health_symptom_summary',
+      optional: true,
+      endpoint: 'health_symtoms.php',
+      uniqueField: 'id',
+      yearPayloads: HEALTH_SUMMARY_YEARS.map((year) => ({ module_type: 'health', year })),
+      fieldMap: {
+        id: 'id', year: 'year', symptom_id: 'symptom_id',
+        symptom_name: 'symptom_name', total_patients: 'total_patients'
       }
     }
   ],
@@ -579,14 +716,98 @@ async function filterValidForeignKeys(tableName, records, fieldMap) {
   return processedRecords;
 }
 
+function decorateRecords(plan, records, yearHint) {
+  if (!records || records.length === 0) return records;
+  if (plan.table === 'education_program') {
+    records.forEach((rec) => {
+      if (typeof rec.program_name === 'string') {
+        rec.program_name = rec.program_name.trim();
+      }
+      if (rec.created_at) {
+        const date = new Date(rec.created_at);
+        if (!Number.isNaN(date.getTime())) {
+          const year = date.getFullYear();
+          const month = date.getMonth() + 1;
+          rec.academic_year = month >= 4
+            ? `${year}-${(year + 1).toString().slice(-2)}`
+            : `${year - 1}-${year.toString().slice(-2)}`;
+        }
+      }
+    });
+  }
+  if (plan.table === 'health_beneficiary_year') {
+    records.forEach((rec) => {
+      if (yearHint && rec.year == null) rec.year = yearHint;
+    });
+  }
+  if (plan.table === 'health_disease_summary') {
+    records.forEach((rec) => {
+      const year = yearHint || rec.year;
+      rec.year = year;
+      rec.id = `${year}_${rec.disease_id}`;
+    });
+  }
+  if (plan.table === 'health_symptom_summary') {
+    records.forEach((rec) => {
+      const year = yearHint || rec.year;
+      rec.year = year;
+      rec.id = rec.id || `${year}_${rec.symptom_id || rec.symtom_id || rec.id}`;
+    });
+  }
+  if (plan.table === 'education_mixprogram') {
+    records.forEach((rec) => {
+      if (yearHint && rec.year == null) rec.year = yearHint;
+      if (!rec.id) {
+        rec.id = [rec.program_id || MIXPROGRAM_ID, rec.year || yearHint, rec.sno, rec.school_name]
+          .filter(Boolean)
+          .join('_');
+      }
+    });
+  }
+  if (plan.table === 'health_patient_appointments') {
+    records.forEach((rec) => {
+      const mapping = [
+        { field: 'symtom', key: 'symptom_name' },
+        { field: 'disease', key: 'disease_name' },
+        { field: 'prescription', key: 'medicine_name' }
+      ];
+      for (const item of mapping) {
+        const rawVal = rec[item.field];
+        if (rawVal && typeof rawVal === 'string' && rawVal.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(rawVal);
+            if (Array.isArray(parsed)) {
+              const names = parsed
+                .map((subItem) => (subItem && typeof subItem === 'object' ? subItem[item.key] : null))
+                .filter(Boolean);
+              if (names.length > 0) rec[item.field] = names.join(', ');
+            }
+          } catch (e) {
+            // keep raw
+          }
+        }
+      }
+    });
+  }
+  return records;
+}
+
+async function ingestRecords(plan, records, timeout, maxRetries) {
+  let decorated = decorateRecords(plan, records);
+  const filtered = await filterValidForeignKeys(plan.table, decorated, plan.fieldMap);
+  return upsertRecords(plan.table, filtered, plan.uniqueField, plan.fieldMap);
+}
+
 // Main execution function
 export async function syncModule(moduleName, forceFull = false) {
   const plans = SYNC_PLANS[moduleName];
   if (!plans) {
     throw new Error(`Unknown sync module: ${moduleName}`);
   }
-  
-  const timeout = Number(process.env.API_TIMEOUT) || 30;
+
+  await ensureEnvelopeTables();
+
+  const timeout = Number(process.env.API_TIMEOUT) || 45;
   const maxRetries = Number(process.env.API_RETRY_COUNT) || 2;
   
   const summary = [];
@@ -608,23 +829,23 @@ export async function syncModule(moduleName, forceFull = false) {
       let totalUpserted = 0;
 
       if (plan.useDateRange && plan.dateColumn) {
-        let fromDate = '2026-05-01';
+        let fromDate = HEALTH_SYNC_START;
         if (!forceFull) {
           try {
             const maxDateRes = await pool.query(`SELECT MAX("${plan.dateColumn}") AS max_date FROM "${plan.table}"`);
             const maxDate = maxDateRes.rows[0]?.max_date;
             if (maxDate) {
               const d = new Date(maxDate);
-              d.setDate(d.getDate() - 1);
-              fromDate = d.toISOString().split('T')[0];
+              if (!Number.isNaN(d.getTime()) && d.getFullYear() > 1971) {
+                d.setDate(d.getDate() - 1);
+                fromDate = d.toISOString().split('T')[0];
+              }
             }
           } catch (dbErr) {
-            console.warn(`[syncEngine] Failed to query max date for table ${plan.table}, falling back to default start date:`, dbErr.message || dbErr);
+            console.warn(`[syncEngine] Failed to query max date for table ${plan.table}, falling back to ${HEALTH_SYNC_START}:`, dbErr.message || dbErr);
           }
         }
         const toDate = new Date().toISOString().split('T')[0];
-
-        // Generate chunks (default to 10 days if chunkSizeDays is not specified)
         const chunkSize = plan.chunkSizeDays || 10;
         const chunks = [];
         let currentFrom = new Date(fromDate);
@@ -651,105 +872,45 @@ export async function syncModule(moduleName, forceFull = false) {
             from_date: chunk.from,
             to_date: chunk.to
           };
-          console.log(`[syncEngine] Fetching chunk for ${plan.table}: ${chunk.from} to ${chunk.to}`);
           let chunkRecords = await fetchWithRetry(plan.endpoint, chunkPayload, timeout, maxRetries);
           if (chunkRecords && chunkRecords.length > 0) {
             totalFetched += chunkRecords.length;
-
-            // Custom parsing for patient appointments symptoms, disease, prescription JSON array
-            if (plan.table === 'health_patient_appointments') {
-              chunkRecords.forEach(rec => {
-                const mapping = [
-                  { field: 'symtom', key: 'symptom_name' },
-                  { field: 'disease', key: 'disease_name' },
-                  { field: 'prescription', key: 'medicine_name' }
-                ];
-                for (const item of mapping) {
-                  const rawVal = rec[item.field];
-                  if (rawVal && typeof rawVal === 'string' && rawVal.startsWith('[')) {
-                    try {
-                      const parsed = JSON.parse(rawVal);
-                      if (Array.isArray(parsed)) {
-                        const names = parsed
-                          .map(subItem => subItem && typeof subItem === 'object' ? subItem[item.key] : null)
-                          .filter(Boolean);
-                        if (names.length > 0) {
-                          rec[item.field] = names.join(', ');
-                        }
-                      }
-                    } catch (e) {
-                      // Ignore parsing errors and keep raw
-                    }
-                  }
-                }
-              });
-            }
-
-            const filteredRecords = await filterValidForeignKeys(plan.table, chunkRecords, plan.fieldMap);
-            const upserted = await upsertRecords(plan.table, filteredRecords, plan.uniqueField, plan.fieldMap);
-            totalUpserted += upserted;
+            totalUpserted += await ingestRecords(plan, chunkRecords);
+          }
+        }
+      } else if (plan.yearPayloads) {
+        for (const payload of plan.yearPayloads) {
+          let records = await fetchWithRetry(plan.endpoint, payload, timeout, maxRetries);
+          records = decorateRecords(plan, records, payload.year);
+          totalFetched += records.length;
+          if (records.length > 0) {
+            const filtered = await filterValidForeignKeys(plan.table, records, plan.fieldMap);
+            totalUpserted += await upsertRecords(plan.table, filtered, plan.uniqueField, plan.fieldMap);
           }
         }
       } else {
-        // Non-date-filtered table sync (legacy/full sync)
         let records = await fetchWithRetry(plan.endpoint, plan.payload, timeout, maxRetries);
         totalFetched = records.length;
         if (records && records.length > 0) {
-          // Dynamic calculation of academic year for education_program
-          if (plan.table === 'education_program') {
-            records.forEach(rec => {
-              if (rec.created_at) {
-                const date = new Date(rec.created_at);
-                const year = date.getFullYear();
-                const month = date.getMonth() + 1; // 1-indexed
-                const academicYear = month >= 4 
-                  ? `${year}-${(year + 1).toString().slice(-2)}` 
-                  : `${year - 1}-${year.toString().slice(-2)}`;
-                rec.academic_year = academicYear;
-              }
-            });
-          }
-          // Custom parsing for patient appointments symptoms, disease, prescription JSON array (for completeness)
-          if (plan.table === 'health_patient_appointments') {
-            records.forEach(rec => {
-              const mapping = [
-                { field: 'symtom', key: 'symptom_name' },
-                { field: 'disease', key: 'disease_name' },
-                { field: 'prescription', key: 'medicine_name' }
-              ];
-              for (const item of mapping) {
-                const rawVal = rec[item.field];
-                if (rawVal && typeof rawVal === 'string' && rawVal.startsWith('[')) {
-                  try {
-                    const parsed = JSON.parse(rawVal);
-                    if (Array.isArray(parsed)) {
-                      const names = parsed
-                        .map(subItem => subItem && typeof subItem === 'object' ? subItem[item.key] : null)
-                        .filter(Boolean);
-                      if (names.length > 0) {
-                        rec[item.field] = names.join(', ');
-                      }
-                    }
-                  } catch (e) {
-                    // Ignore parsing errors and keep raw
-                  }
-                }
-              }
-            });
-          }
-          const filteredRecords = await filterValidForeignKeys(plan.table, records, plan.fieldMap);
-          totalUpserted = await upsertRecords(plan.table, filteredRecords, plan.uniqueField, plan.fieldMap);
+          totalUpserted = await ingestRecords(plan, records);
         }
       }
 
       await writeSyncLog(moduleName, plan.table, totalFetched, totalUpserted, 'success', null, startedAt);
       summary.push({ table: plan.table, fetched: totalFetched, upserted: totalUpserted, status: 'success' });
     } catch (err) {
+      const message = err.message || String(err);
+      if (plan.optional) {
+        console.warn(`[syncEngine] Optional table ${plan.table} skipped: ${message}`);
+        await writeSyncLog(moduleName, plan.table, 0, 0, 'skipped', message, startedAt);
+        summary.push({ table: plan.table, fetched: 0, upserted: 0, status: 'skipped', error: message });
+        continue;
+      }
       if (isGeographicTable) {
         geoFailed = true;
       }
-      await writeSyncLog(moduleName, plan.table, 0, 0, 'error', err.message || err, startedAt);
-      summary.push({ table: plan.table, fetched: 0, upserted: 0, status: 'error', error: err.message || err });
+      await writeSyncLog(moduleName, plan.table, 0, 0, 'error', message, startedAt);
+      summary.push({ table: plan.table, fetched: 0, upserted: 0, status: 'error', error: message });
     }
   }
   return summary;

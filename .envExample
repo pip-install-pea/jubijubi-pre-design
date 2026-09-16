@@ -14,12 +14,10 @@ SYNC_INTERVAL_MS=1800000
 API_TIMEOUT=30
 API_RETRY_COUNT=2
 
-# HEALTH ANALYTICS CONSTANTS
-# Constants utilized by health dashboards to estimate sustainability metrics and financial savings
-CO2_PER_PATIENT_KG=0.3
-TARIFF_SAVED_PER_VISIT=150
-WAGE_LOSS_SAVED_PER_VISIT=200
+# Health incremental sync starts here (not 2026-05-01). Lookup tables still send from_date/to_date.
+HEALTH_SYNC_START=2025-01-01
+HEALTH_SUMMARY_YEARS=2024,2025,2026
 
-# LIVELIHOOD ANALYTICS CONSTANTS
-# Cost parameters utilized by livelihood analytics indicators
-PROGRAM_COST_LIVELIHOOD=500000
+# Optional mixprogram.php payloads
+EDU_PROGRAM_ID=5
+EDU_MIX_YEARS=2024-25,2025-26

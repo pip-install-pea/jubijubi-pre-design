@@ -1,5 +1,6 @@
 /**
  * Replicates the legacy Flask app's analytics filter builder in JS.
+ * Location IDs are module-scoped: health state_id=1 ≠ livelihood state_id=1.
  */
 
 export function buildFilters(filters, options = {}) {
@@ -11,11 +12,18 @@ export function buildFilters(filters, options = {}) {
     gender_col = null,
     school_col = null,
     academic_year_col = null,
-    trade_col = null
+    financial_year_col = null,
+    trade_col = null,
+    module = null,
+    apply_geo = true
   } = options;
 
   const clauses = [];
   const params = {};
+
+  const geoModule = filters?.geo_module;
+  const skipGeo = !apply_geo || !geoModule || geoModule === 'overview';
+  const geoMatches = !skipGeo && (!module || geoModule === module);
 
   const state_id = filters?.state_id;
   const district_id = filters?.district_id;
@@ -25,13 +33,14 @@ export function buildFilters(filters, options = {}) {
   const gender = filters?.gender;
   const trade = filters?.trade;
   const academic_yr = filters?.academic_year;
+  const financial_yr = filters?.financial_year;
   const school_id = filters?.school_id;
 
-  if (state_id && state_col) {
+  if (geoMatches && state_id && state_col) {
     clauses.push(`${state_col} = :state_id`);
     params.state_id = state_id;
   }
-  if (district_id && district_col) {
+  if (geoMatches && district_id && district_col) {
     clauses.push(`${district_col} = :district_id`);
     params.district_id = district_id;
   }
@@ -55,8 +64,11 @@ export function buildFilters(filters, options = {}) {
     clauses.push(`${academic_year_col} = :academic_year`);
     params.academic_year = academic_yr;
   }
-  
-  // cast to text to handle both ISO string and timestamps safely in PG
+  if (financial_yr && financial_year_col) {
+    clauses.push(`${financial_year_col} = :financial_year`);
+    params.financial_year = financial_yr;
+  }
+
   if (date_col && year) {
     clauses.push(`SUBSTR(${date_col}::text, 1, 4) = :year`);
     params.year = year;
@@ -83,6 +95,10 @@ export function whereStr(clauses) {
   return clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+export function validDateClause(col) {
+  return `(${col} IS NOT NULL AND ${col}::text !~ '^(0000|1970-01-01)' AND SUBSTR(${col}::text, 1, 4) NOT IN ('0000', '1970'))`;
+}
+
 export function getFiltersFromRequest(req) {
   const url = new URL(req.url);
   return {
@@ -94,6 +110,8 @@ export function getFiltersFromRequest(req) {
     gender: url.searchParams.get('gender') || null,
     trade: url.searchParams.get('trade') || null,
     academic_year: url.searchParams.get('academic_year') || null,
+    financial_year: url.searchParams.get('financial_year') || null,
     school_id: url.searchParams.get('school_id') || null,
+    geo_module: url.searchParams.get('geo_module') || null,
   };
 }
