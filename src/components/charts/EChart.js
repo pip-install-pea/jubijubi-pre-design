@@ -196,6 +196,46 @@ export function comboLineBarOption(labels, { bar, line, barName = 'Added this ye
   };
 }
 
+export function doughnutOption(items) {
+  const data = (items || [])
+    .map((r) => ({ name: String(r.label ?? r.name ?? 'Unknown'), value: Number(r.value) || 0 }))
+    .filter((r) => r.value > 0);
+  return {
+    tooltip: { trigger: 'item', renderMode: 'richText' },
+    legend: { type: 'scroll', orient: 'vertical', right: 0, top: 'middle' },
+    series: [{
+      type: 'pie',
+      radius: ['48%', '72%'],
+      center: ['38%', '50%'],
+      data
+    }]
+  };
+}
+
+export function lineAreaOption(labels, values, { name = '', rupee = false } = {}) {
+  const fmt = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '';
+    return rupee ? `₹${n.toLocaleString('en-IN')}` : n.toLocaleString('en-IN');
+  };
+  return {
+    tooltip: { trigger: 'axis', renderMode: 'richText', valueFormatter: fmt },
+    legend: name ? { bottom: 0 } : { show: false },
+    grid: { left: 8, right: 16, top: 24, bottom: name ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    xAxis: { type: 'category', data: labels || [] },
+    yAxis: { type: 'value', axisLabel: { formatter: fmt } },
+    series: [{
+      type: 'line',
+      name: name || 'Value',
+      data: values || [],
+      smooth: 0.3,
+      symbol: 'circle',
+      symbolSize: 8,
+      areaStyle: { opacity: 0.12 }
+    }]
+  };
+}
+
 export function groupedBarOption(labels, datasets, { horizontal = false } = {}) {
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },

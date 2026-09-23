@@ -43,6 +43,8 @@ const printValueLabels = {
   beforeUpdate(chart) {
     if (typeof document === 'undefined') return;
     const printing = document.documentElement.classList.contains('is-printing');
+    if (chart.$printPadMode === printing) return;
+    chart.$printPadMode = printing;
     chart.options.layout = chart.options.layout || {};
     if (chart.$printPadSaved === undefined) {
       chart.$printPadSaved = chart.options.layout.padding || 0;
@@ -255,9 +257,16 @@ export const rankingBarOptions = {
     },
     y: {
       grid: { display: false, drawBorder: false },
-      ticks: { color: '#142033', font: { size: 11 }, autoSkip: false, crossAlign: 'far' },
-      afterFit(scale) {
-        scale.width = Math.max(scale.width, 128);
+      ticks: {
+        color: '#142033',
+        font: { size: 11 },
+        autoSkip: false,
+        crossAlign: 'far',
+        callback(value, index) {
+          const labels = this.chart?.data?.labels;
+          const label = String(labels?.[index] ?? labels?.[value] ?? value ?? '');
+          return label.length > 24 ? `${label.slice(0, 22)}…` : label;
+        }
       }
     }
   }

@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jubilant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: jubilant
+    command: postgres -c shared_buffers=64MB -c max_connections=40
+    volumes:
+      - jubilant_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jubilant -d jubilant"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 256m
+
+  web:
+    image: jubilant-web:latest
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY: ${SECRET_KEY}
+      AUTO_SYNC: "false"
+      SYNC_INTERVAL_MS: "21600000"
+    mem_limit: 512m
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    mem_limit: 64m
+
+  tools:
+    image: jubilant-tools:latest
+    build:
+      context: .
+      target: tools
+    profiles: ["ops"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable
+      DATABASE_SSL: "false"
+      SEED_ADMIN: ${SEED_ADMIN:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    working_dir: /app
+
+volumes:
+  jubilant_pgdata:

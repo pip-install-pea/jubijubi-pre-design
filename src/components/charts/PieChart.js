@@ -1,41 +1,25 @@
 'use client';
 
-import React from 'react';
-import { Pie } from 'react-chartjs-2';
-import { seriesColors, baseOptions } from '../../lib/chartTheme';
+import React, { useMemo } from 'react';
+import EChart, { doughnutOption } from './EChart';
 
 const PieChart = ({ data, title, onClick }) => {
-  const n = data?.labels?.length || 0;
-  const themed = {
-    ...data,
-    datasets: (data?.datasets || []).map((ds) => ({
-      ...ds,
-      backgroundColor: ds.backgroundColor || seriesColors(n),
-      borderWidth: 0
-    }))
-  };
-
-  const options = {
-    ...baseOptions,
-    onClick: (event, elements) => {
-      if (onClick && elements.length > 0) {
-        const { index } = elements[0];
-        const label = themed.labels[index];
-        const value = themed.datasets[0].data[index];
-        onClick(label, value, index);
-      }
-    },
-    plugins: {
-      ...baseOptions.plugins,
-      legend: { ...baseOptions.plugins.legend, position: 'right' },
-      title: { display: !!title, text: title, color: '#142033' }
-    }
-  };
+  const option = useMemo(() => {
+    const labels = data?.labels || [];
+    const values = data?.datasets?.[0]?.data || [];
+    const items = labels.map((label, i) => ({ label, value: Number(values[i]) || 0 }));
+    return doughnutOption(items);
+  }, [data]);
 
   return (
-    <div className="relative h-64 w-full">
-      <Pie options={options} data={themed} />
-    </div>
+    <EChart
+      option={option}
+      height={256}
+      caption={title}
+      onPoint={onClick
+        ? (p) => onClick(p.name, Number(p.value) || 0, p.dataIndex)
+        : undefined}
+    />
   );
 };
 

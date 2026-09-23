@@ -1,45 +1,38 @@
 'use client';
 
-import React from 'react';
-import { Bar } from 'react-chartjs-2';
-import { seriesColors, baseOptions, hasValues, fadeIfUnfocused } from '../../lib/chartTheme';
+import React, { useMemo } from 'react';
+import EChart, { groupedBarOption } from './EChart';
+import { hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
 export default function GroupedBar({ labels = [], datasets = [], title, caption, horizontal, onBarClick, focus = [] }) {
-  const any = datasets.some((ds) => hasValues(ds.data || []));
-  if (!any || !labels.length) {
-    return <ChartEmpty caption={caption} />;
-  }
+  const option = useMemo(() => {
+    const any = datasets.some((ds) => hasValues(ds.data || []));
+    if (!any || !labels.length) return null;
+    return groupedBarOption(
+      labels,
+      datasets.map((ds) => ({ label: ds.label, data: ds.data })),
+      { horizontal: Boolean(horizontal) }
+    );
+  }, [datasets, horizontal, labels]);
 
-  const palette = seriesColors(datasets.length);
-  const chartDatasets = datasets.map((ds, i) => ({
-    label: ds.label,
-    data: ds.data,
-    backgroundColor: labels.map((label) => fadeIfUnfocused(ds.color || palette[i], label, focus)),
-    borderRadius: 6,
-    maxBarThickness: 28
-  }));
+  if (!option) return <ChartEmpty caption={caption} />;
 
   return (
-    <div className="chart-wrap">
+    <div>
       {title && <p className="chart-kicker">{title}</p>}
-      <div className="h-[300px]">
-        <Bar
-          data={{ labels, datasets: chartDatasets }}
-          options={{
-            ...baseOptions,
-            indexAxis: horizontal ? 'y' : 'x',
-            plugins: { ...baseOptions.plugins, legend: { ...baseOptions.plugins.legend, position: 'bottom' } },
-            onClick: (event, elements) => {
-              if (onBarClick && elements.length > 0) {
-                const idx = elements[0].index;
-                onBarClick(labels[idx], idx, elements[0].datasetIndex, event);
-              }
-            }
-          }}
-        />
-      </div>
-      {caption && <p className="chart-caption">{caption}</p>}
+      <EChart
+        option={option}
+        height={300}
+        caption={caption}
+        focus={focus}
+        onPoint={onBarClick
+          ? (p) => {
+            const datasetIndex = datasets.findIndex((ds) => ds.label === p.seriesName);
+            onBarClick(p.name, p.dataIndex, datasetIndex, p.nativeEvent);
+          }
+          : undefined}
+      />
     </div>
   );
 }

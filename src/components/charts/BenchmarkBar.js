@@ -1,96 +1,88 @@
 'use client';
 
-import React from 'react';
-import { Bar } from 'react-chartjs-2';
+import React, { useMemo } from 'react';
+import EChart, { groupedBarOption } from './EChart';
+import { NAVY, SKY, GOLD, LIME, hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
-import { NAVY, SKY, GOLD, LIME, rankingBarOptions, hasValues, referenceLinePlugin } from '../../lib/chartTheme';
 
 export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
   const rows = payload?.rows || [];
   const labels = rows.map((r) => r.label);
   const values = rows.map((r) => Number(r.value) || 0);
 
-  if (!labels.length || !hasValues(values)) {
-    return <ChartEmpty caption={caption} />;
-  }
+  const option = useMemo(() => {
+    if (!labels.length || !hasValues(values)) return null;
+    const grainLabel = payload?.grain === 'district' ? 'District' : 'State';
+    const unit = payload?.unit || 'count';
+    const stateAvg = payload?.grain === 'district' ? Number(payload.state_average) || 0 : 0;
+    const progAvg = Number(payload?.programme_average) || 0;
+    const nProg = Number(payload?.programme_n) || 0;
+    const nState = Number(payload?.state_n) || 0;
+    const markLineData = [];
+    if (stateAvg > 0) {
+      markLineData.push({
+        xAxis: stateAvg,
+        name: `State mean · ${nState || 'all'} districts`,
+        lineStyle: { color: SKY, type: 'dashed', width: 2 },
+        label: { formatter: 'State mean', color: SKY }
+      });
+    }
+    if (progAvg > 0) {
+      markLineData.push({
+        xAxis: progAvg,
+        name: `Programme mean · ${nProg || 'all'} ${grainLabel.toLowerCase()}s`,
+        lineStyle: { color: GOLD, type: 'dashed', width: 2 },
+        label: { formatter: 'Programme mean', color: GOLD }
+      });
+    }
 
-  const grainLabel = payload?.grain === 'district' ? 'District' : 'State';
-  const unit = payload?.unit || 'count';
-  const stateAvg = payload?.grain === 'district' ? Number(payload.state_average) || 0 : 0;
-  const progAvg = Number(payload?.programme_average) || 0;
-  const nProg = Number(payload?.programme_n) || 0;
-  const nState = Number(payload?.state_n) || 0;
+    const base = groupedBarOption(labels, [{ label: grainLabel, data: values }], { horizontal: true });
+    return {
+      ...base,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        renderMode: 'richText',
+        formatter: (items) => {
+          const item = Array.isArray(items) ? items[0] : items;
+          const row = rows[item?.dataIndex] || {};
+          const v = Number(item?.value) || 0;
+          const bits = [`${item?.name || ''}`, `${v.toLocaleString('en-IN')} ${unit}`];
+          if (row.vs_programme_pct != null) {
+            bits.push(`${row.vs_programme_pct > 0 ? '+' : ''}${row.vs_programme_pct}% vs programme mean`);
+          }
+          if (row.vs_state_pct != null) {
+            bits.push(`${row.vs_state_pct > 0 ? '+' : ''}${row.vs_state_pct}% vs state mean`);
+          }
+          return bits.join('\n');
+        }
+      },
+      series: [{
+        type: 'bar',
+        name: grainLabel,
+        emphasis: { focus: 'series' },
+        data: values.map((v) => ({
+          value: v,
+          itemStyle: { color: progAvg > 0 && v >= progAvg ? LIME : NAVY }
+        })),
+        markLine: markLineData.length ? { symbol: 'none', data: markLineData } : undefined
+      }]
+    };
+  }, [labels, payload, rows, values]);
 
-  const colors = values.map((v) => {
-    if (progAvg > 0 && v >= progAvg) return LIME;
-    return NAVY;
-  });
-
-  const lines = [];
-  if (stateAvg > 0) {
-    lines.push({
-      value: stateAvg,
-      color: SKY,
-      label: `State mean · ${nState || 'all'} districts`
-    });
-  }
-  if (progAvg > 0) {
-    lines.push({
-      value: progAvg,
-      color: GOLD,
-      label: `Programme mean · ${nProg || 'all'} ${grainLabel.toLowerCase()}s`
-    });
-  }
+  if (!option) return <ChartEmpty caption={caption} />;
 
   return (
-    <div className="chart-wrap">
+    <div>
       {title && <p className="chart-kicker">{title}</p>}
-      <div className="h-[320px]">
-        <Bar
-          data={{
-            labels,
-            datasets: [{
-              label: grainLabel,
-              data: values,
-              backgroundColor: colors,
-              borderRadius: 6,
-              maxBarThickness: 28
-            }]
-          }}
-          options={{
-            ...rankingBarOptions,
-            plugins: {
-              ...rankingBarOptions.plugins,
-              legend: { display: false },
-              tooltip: {
-                ...rankingBarOptions.plugins.tooltip,
-                callbacks: {
-                  label(ctx) {
-                    const v = Number(ctx.parsed?.x ?? ctx.raw) || 0;
-                    const bits = [`${v.toLocaleString('en-IN')} ${unit}`];
-                    const row = rows[ctx.dataIndex];
-                    if (row?.vs_programme_pct != null) {
-                      bits.push(`${row.vs_programme_pct > 0 ? '+' : ''}${row.vs_programme_pct}% vs programme mean`);
-                    }
-                    if (row?.vs_state_pct != null) {
-                      bits.push(`${row.vs_state_pct > 0 ? '+' : ''}${row.vs_state_pct}% vs state mean`);
-                    }
-                    return bits;
-                  }
-                }
-              }
-            },
-            onClick: (event, elements) => {
-              if (onBarClick && elements.length > 0) {
-                const idx = elements[0].index;
-                onBarClick(labels[idx], rows[idx], idx);
-              }
-            }
-          }}
-          plugins={[referenceLinePlugin(lines)]}
-        />
-      </div>
-      {caption ? <p className="chart-caption">{caption}</p> : null}
+      <EChart
+        option={option}
+        height={Math.max(280, labels.length * 28)}
+        caption={caption}
+        onPoint={onBarClick
+          ? (p) => onBarClick(p.name, rows[p.dataIndex], p.dataIndex)
+          : undefined}
+      />
     </div>
   );
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
-import { Scatter } from 'react-chartjs-2';
-import { NAVY, SKY, GOLD, LIME, baseOptions, hasValues } from '../../lib/chartTheme';
+import React, { useMemo } from 'react';
+import EChart from './EChart';
+import { NAVY, SKY, GOLD, LIME, hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
 const QUAD_COLORS = {
@@ -10,36 +10,6 @@ const QUAD_COLORS = {
   'High reach, low gain': GOLD,
   'Low reach, high gain': SKY,
   'Low reach, low gain': NAVY
-};
-
-const medianLines = {
-  id: 'medianLines',
-  afterDraw(chart) {
-    const cfg = chart.options.plugins?.medianLines;
-    if (!cfg) return;
-    const { medianX, medianY } = cfg;
-    const { ctx, chartArea, scales } = chart;
-    if (!chartArea || !scales.x || !scales.y) return;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(27, 42, 74, 0.35)';
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1;
-    if (Number.isFinite(medianX)) {
-      const x = scales.x.getPixelForValue(medianX);
-      ctx.beginPath();
-      ctx.moveTo(x, chartArea.top);
-      ctx.lineTo(x, chartArea.bottom);
-      ctx.stroke();
-    }
-    if (Number.isFinite(medianY)) {
-      const y = scales.y.getPixelForValue(medianY);
-      ctx.beginPath();
-      ctx.moveTo(chartArea.left, y);
-      ctx.lineTo(chartArea.right, y);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
 };
 
 export default function QuadrantScatter({
@@ -54,76 +24,83 @@ export default function QuadrantScatter({
   const xs = points.map((p) => Number(p.x) || 0);
   const ys = points.map((p) => Number(p.y) || 0);
 
-  if (payload?.status === 'no_data' || !points.length || (!hasValues(xs) && !ys.some((v) => v !== 0))) {
-    return <ChartEmpty caption={caption || payload?.message} />;
-  }
+  const option = useMemo(() => {
+    if (payload?.status === 'no_data' || !points.length || (!hasValues(xs) && !ys.some((v) => v !== 0))) {
+      return null;
+    }
+    const series = Object.keys(QUAD_COLORS).map((quad) => ({
+      type: 'scatter',
+      name: quad,
+      symbolSize: 10,
+      itemStyle: { color: QUAD_COLORS[quad] },
+      data: points
+        .filter((p) => p.quadrant === quad)
+        .map((p) => ({
+          value: [Number(p.x) || 0, Number(p.y) || 0],
+          name: p.label,
+          key: p.key,
+          label: p.label
+        }))
+    })).filter((ds) => ds.data.length);
+    if (!series.length) return null;
+    const medianX = Number(payload?.median_students) || 0;
+    const medianY = Number(payload?.median_gain) || 0;
+    series[0] = {
+      ...series[0],
+      markLine: {
+        silent: true,
+        symbol: 'none',
+        lineStyle: { color: 'rgba(27, 42, 74, 0.35)', type: 'dashed' },
+        data: [
+          ...(Number.isFinite(medianX) ? [{ xAxis: medianX }] : []),
+          ...(Number.isFinite(medianY) ? [{ yAxis: medianY }] : [])
+        ]
+      }
+    };
+    return {
+      tooltip: {
+        trigger: 'item',
+        renderMode: 'richText',
+        formatter: (p) => {
+          const xy = Array.isArray(p.value) ? p.value : [p.value, 0];
+          return `${p.data?.name || p.name || ''}\nReach ${Number(xy[0] || 0).toLocaleString('en-IN')} · Gain ${Number(xy[1] || 0).toFixed(2)}`;
+        }
+      },
+      legend: { bottom: 0 },
+      grid: { left: 48, right: 16, top: 24, bottom: 56, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+      xAxis: {
+        name: xLabel,
+        nameLocation: 'middle',
+        nameGap: 28,
+        axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') }
+      },
+      yAxis: {
+        name: yLabel,
+        nameLocation: 'middle',
+        nameGap: 36
+      },
+      series
+    };
+  }, [payload, points, xLabel, xs, yLabel, ys]);
 
-  const datasets = Object.keys(QUAD_COLORS).map((quad) => ({
-    label: quad,
-    data: points
-      .filter((p) => p.quadrant === quad)
-      .map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0, label: p.label, key: p.key })),
-    backgroundColor: QUAD_COLORS[quad],
-    pointRadius: 6,
-    pointHoverRadius: 8
-  })).filter((ds) => ds.data.length);
-
-  if (!datasets.length) {
-    return <ChartEmpty caption={caption || payload?.message} />;
-  }
+  if (!option) return <ChartEmpty caption={caption || payload?.message} />;
 
   return (
-    <div className="chart-wrap">
+    <div>
       {title && <p className="chart-kicker">{title}</p>}
-      <div className="h-[360px]">
-        <Scatter
-          plugins={[medianLines]}
-          data={{ datasets }}
-          options={{
-            ...baseOptions,
-            plugins: {
-              ...baseOptions.plugins,
-              legend: { ...baseOptions.plugins.legend, position: 'bottom' },
-              medianLines: {
-                medianX: Number(payload?.median_students) || 0,
-                medianY: Number(payload?.median_gain) || 0
-              },
-              tooltip: {
-                ...baseOptions.plugins.tooltip,
-                callbacks: {
-                  title(items) {
-                    return items[0]?.raw?.label || '';
-                  },
-                  label(ctx) {
-                    const p = ctx.raw || {};
-                    return `Reach ${Number(p.x || 0).toLocaleString('en-IN')} · Gain ${Number(p.y || 0).toFixed(2)}`;
-                  }
-                }
-              }
-            },
-            scales: {
-              x: {
-                ...baseOptions.scales.x,
-                title: { display: true, text: xLabel, color: '#142033' },
-                grid: { color: 'rgba(141, 198, 63, 0.18)', drawBorder: false }
-              },
-              y: {
-                ...baseOptions.scales.y,
-                beginAtZero: false,
-                title: { display: true, text: yLabel, color: '#142033' }
-              }
-            },
-            onClick: (event, elements) => {
-              if (onPointClick && elements.length > 0) {
-                const el = elements[0];
-                const point = datasets[el.datasetIndex]?.data[el.index];
-                if (point) onPointClick(point);
-              }
-            }
-          }}
-        />
-      </div>
-      {caption && <p className="chart-caption">{caption}</p>}
+      <EChart
+        option={option}
+        height={360}
+        caption={caption}
+        onPoint={onPointClick
+          ? (p) => onPointClick({
+            x: Array.isArray(p.value) ? p.value[0] : p.value,
+            y: Array.isArray(p.value) ? p.value[1] : 0,
+            label: p.data?.label || p.name,
+            key: p.data?.key
+          })
+          : undefined}
+      />
     </div>
   );
 }
