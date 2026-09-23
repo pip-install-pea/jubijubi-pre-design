@@ -2,12 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import Link from 'next/link';
 import BrandDoughnut from '../../../components/charts/BrandDoughnut';
 import ColumnBar from '../../../components/charts/ColumnBar';
-import BrandLine from '../../../components/charts/BrandLine';
+import FunnelBars from '../../../components/charts/FunnelBars';
+import EChart, { comboLineBarOption } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
-import { NAVY, SKY, GOLD } from '../../../lib/chartTheme';
 
 export default function PlacementPage() {
   const [data, setData] = useState(null);
@@ -27,12 +26,20 @@ export default function PlacementPage() {
       Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
     ).toString();
     try {
-      const [status, incomeRange, yoy] = await Promise.all([
+      const [status, incomeRange, yoy, funnel, distributions] = await Promise.all([
         axios.get(`/api/livelihood/placement/status?${query}`),
         axios.get(`/api/livelihood/placement/income_range?${query}`),
-        axios.get(`/api/livelihood/placement/yoy_income?${query}`)
+        axios.get(`/api/livelihood/placement/yoy_income?${query}`),
+        axios.get(`/api/livelihood/placement/funnel?${query}`),
+        axios.get(`/api/livelihood/placement/distributions?${query}`)
       ]);
-      setData({ status: status.data, incomeRange: incomeRange.data, yoy: yoy.data });
+      setData({
+        status: status.data,
+        incomeRange: incomeRange.data,
+        yoy: yoy.data,
+        funnel: funnel.data,
+        distributions: distributions.data
+      });
     } catch (err) {
       console.error('Placement data load failed', err);
     } finally {
@@ -64,16 +71,6 @@ export default function PlacementPage() {
 
   return (
     <div>
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Livelihood — Placement</h2>
-        <p className="section-sub">Monitored work status and current income — not a 4-way placement codebook</p>
-      </div>
-
-      <div className="page-tabs" style={{ marginBottom: '24px' }}>
-        <Link href="/livelihood/skilling" className="tab">Skilling</Link>
-        <Link href="/livelihood/placement" className="tab tab--active">Placement</Link>
-        <Link href="/livelihood/enterprise" className="tab">Enterprise</Link>
-      </div>
 
       {data && (
         <>
@@ -81,8 +78,7 @@ export default function PlacementPage() {
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
               <div className="kpi-body">
                 <div className="kpi-value">{fmt(data.status?.total)}</div>
-                <div className="kpi-label">Monitored people</div>
-                <p className="kpi-caption">skilltracking_monitor rows. Not the full roster.</p>
+                <div className="kpi-label">People monitored</div>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('placement_status', 'Working')}>
@@ -90,40 +86,34 @@ export default function PlacementPage() {
                 <div className="kpi-value">
                   {data.status?.breakdown?.find(r => r.status === 'Working')?.percent || '—'}%
                 </div>
-                <div className="kpi-label">Share working (monitored)</div>
-                <p className="kpi-caption">Working / Not Working only. Not employment / self-employment / study / not interested.</p>
+                <div className="kpi-label">Share working</div>
               </div>
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
-                <div className="kpi-value">{fmtINR(data.yoy?.[data.yoy.length - 1]?.avg_income)}</div>
-                <div className="kpi-label">Latest avg monthly income</div>
-                <p className="kpi-caption">Current income, not increase.</p>
+                <div className="kpi-value">{fmtINR(data.yoy?.[data.yoy.length - 1]?.median_income)}</div>
+                <div className="kpi-label">Typical post income</div>
               </div>
             </div>
           </div>
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Work status doughnut</h3></div>
+              <div className="card-header"><h3>Work status</h3></div>
               <div className="card-body">
                 <BrandDoughnut
                   labels={data.status?.breakdown?.map(r => r.status) || []}
                   values={data.status?.breakdown?.map(r => r.count) || []}
-                  colors={[NAVY, SKY]}
-                  caption="Monitored subset, not full roster."
                   onSliceClick={(label) => handleDrilldown('placement_status', label)}
                 />
               </div>
             </div>
             <div className="card">
-              <div className="card-header"><h3>Current income (working only)</h3></div>
+              <div className="card-header"><h3>Field-sheet post income</h3></div>
               <div className="card-body">
                 <ColumnBar
                   labels={['₹0–5K', '₹5K–10K', '₹10K+']}
                   values={[data.incomeRange?.['0_5000'], data.incomeRange?.['5001_10000'], data.incomeRange?.['10001_plus']]}
-                  colors={[NAVY, SKY, GOLD]}
-                  caption="Current monthly_income for work_status = Working. Not income increase."
                   onBarClick={(_, __, idx) => {
                     const labels = ['0_5000', '5001_10000', '10001_plus'];
                     handleDrilldown('income_range', labels[idx], { placed_only: '1' });
@@ -134,15 +124,51 @@ export default function PlacementPage() {
           </div>
 
           <div className="card" style={{ marginTop: '24px' }}>
-            <div className="card-header"><h3>Average monthly income by monitor year</h3></div>
+            <div className="card-header"><h3>Skilling → placement → income</h3></div>
             <div className="card-body">
-              <BrandLine
-                labels={data.yoy?.map(r => r.year) || []}
-                values={data.yoy?.map(r => r.avg_income) || []}
-                rupee
-                label="Avg monthly income"
-                caption="Sentinel dates (0000-00-00, 1970-01-01) are excluded."
-                onPointClick={(label) => handleDrilldown('placement_year', label)}
+              <FunnelBars
+                stages={data.funnel?.stages || []}
+                caption="Roster and working still come from skill tracking. The last bar is field-sheet rows with post_income > 0, not monitor income."
+                onBarClick={(stage) => handleDrilldown('funnel', stage?.key)}
+              />
+            </div>
+          </div>
+
+          <div className="card-row" style={{ marginTop: '24px' }}>
+            <div className="card">
+              <div className="card-header"><h3>Time to first working status</h3></div>
+              <div className="card-body">
+                <ColumnBar
+                  labels={(data.distributions?.time_to_placement || []).map((r) => r.label)}
+                  values={(data.distributions?.time_to_placement || []).map((r) => r.value)}
+                  onBarClick={(label) => handleDrilldown('time_to_placement', label)}
+                />
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-header"><h3>Income change (field-sheet pre to post)</h3></div>
+              <div className="card-body">
+                <ColumnBar
+                  labels={(data.distributions?.income_delta || []).map((r) => r.label)}
+                  values={(data.distributions?.income_delta || []).map((r) => r.value)}
+                  onBarClick={(label) => handleDrilldown('income_delta', label)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: '24px' }}>
+            <div className="card-header"><h3>Typical post income by field-sheet year</h3></div>
+            <div className="card-body">
+              <EChart
+                option={comboLineBarOption((data.yoy || []).map((r) => r.year), {
+                  bar: (data.yoy || []).map((r) => Number(r.count) || 0),
+                  line: (data.yoy || []).map((r) => Number(r.median_income) || 0),
+                  barName: 'Rows with post income',
+                  lineName: 'Median post income (₹)',
+                  dualAxis: true
+                })}
+                onPoint={(p) => p.name && handleDrilldown('placement_year', p.name)}
               />
             </div>
           </div>

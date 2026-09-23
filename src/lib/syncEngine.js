@@ -1,17 +1,31 @@
 import axios from 'axios';
 import pool from './db.js';
 
+import { currentCalendarYear, financialYearList } from './phpRegistry.js';
+
 const API_BASE = 'https://jubicare.indevconsultancy.com/api/centralizeddashboardapi/';
 const BATCH_SIZE = 300;
 const MAX_TEXT_LEN = 1000;
 const HTML_RE = /<[^>]+>/g;
 const HEALTH_SYNC_START = process.env.HEALTH_SYNC_START || '2025-01-01';
-const HEALTH_SUMMARY_YEARS = (process.env.HEALTH_SUMMARY_YEARS || '2024,2025,2026')
+const cy = Number(currentCalendarYear());
+const HEALTH_SUMMARY_YEARS = (process.env.HEALTH_SUMMARY_YEARS
+  || [cy - 2, cy - 1, cy].join(','))
+  .split(',')
+  .map((y) => y.trim())
+  .filter(Boolean);
+function yearList(start, end) {
+  const out = [];
+  for (let y = Number(start); y <= Number(end); y++) out.push(String(y));
+  return out;
+}
+const HEALTH_BENEFICIARY_YEARS = (process.env.HEALTH_BENEFICIARY_YEARS
+  || yearList(2016, Number(currentCalendarYear())).join(','))
   .split(',')
   .map((y) => y.trim())
   .filter(Boolean);
 const MIXPROGRAM_ID = process.env.EDU_PROGRAM_ID || '5';
-const MIXPROGRAM_YEARS = (process.env.EDU_MIX_YEARS || '2024-25,2025-26')
+const MIXPROGRAM_YEARS = (process.env.EDU_MIX_YEARS || financialYearList(3).join(','))
   .split(',')
   .map((y) => y.trim())
   .filter(Boolean);
@@ -96,6 +110,8 @@ async function fetchWithRetry(endpoint, payload, timeout = 30, maxRetries = 2) {
       return parseApiResponse(data);
     } catch (err) {
       lastError = err;
+      const status = err.response?.status;
+      if (status === 500) throw err;
       if (attempt < maxRetries) {
         const waitTime = Math.pow(2, attempt) * 1000;
         await new Promise(res => setTimeout(res, waitTime));
@@ -103,6 +119,53 @@ async function fetchWithRetry(endpoint, payload, timeout = 30, maxRetries = 2) {
     }
   }
   throw lastError;
+}
+
+function addDaysIso(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function midIso(from, to) {
+  const a = new Date(`${from}T00:00:00Z`).getTime();
+  const b = new Date(`${to}T00:00:00Z`).getTime();
+  return new Date(a + Math.floor((b - a) / 2)).toISOString().slice(0, 10);
+}
+
+/** health.php can 500 on a wide date window; split and retry. */
+async function fetchDatedChunk(endpoint, payload, timeout, maxRetries, depth = 0) {
+  try {
+    return await fetchWithRetry(endpoint, payload, timeout, maxRetries);
+  } catch (err) {
+    const from = payload.from_date;
+    const to = payload.to_date;
+    if (err.response?.status === 500 && from && to && depth < 2 && from < to) {
+      let mid = midIso(from, to);
+      if (mid >= to) mid = addDaysIso(to, -1);
+      if (mid < from) mid = from;
+      console.warn(`[syncEngine] HTTP 500 on ${endpoint} ${from}..${to}; splitting at ${mid}`);
+      const first = await fetchDatedChunk(
+        endpoint,
+        { ...payload, from_date: from, to_date: mid },
+        timeout,
+        maxRetries,
+        depth + 1
+      );
+      const nextFrom = addDaysIso(mid, 1);
+      const second = nextFrom <= to
+        ? await fetchDatedChunk(
+          endpoint,
+          { ...payload, from_date: nextFrom, to_date: to },
+          timeout,
+          maxRetries,
+          depth + 1
+        )
+        : [];
+      return [...(first || []), ...(second || [])];
+    }
+    throw err;
+  }
 }
 
 // Write a sync log record
@@ -131,7 +194,7 @@ async function ensureColumn(table, column, type = 'TEXT') {
   await pool.query(`ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" ${type}`);
 }
 
-async function ensureEnvelopeTables() {
+export async function ensureEnvelopeTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS health_beneficiary_year (
       year TEXT PRIMARY KEY,
@@ -194,17 +257,191 @@ async function ensureEnvelopeTables() {
       theme_touched TEXT,
       class TEXT,
       status TEXT,
+      number_of_farmers INTEGER,
+      activity_name TEXT,
+      month TEXT,
+      fellows INTEGER,
+      values_taught TEXT,
+      sessions_per_value INTEGER,
+      total_sessions INTEGER,
+      age_group TEXT,
+      number_of_schools INTEGER,
+      number_of_teachers INTEGER,
+      category_gen INTEGER,
+      category_sc_st INTEGER,
+      category_obc INTEGER,
+      category_ebc INTEGER,
+      category_minorities INTEGER,
+      person_gender TEXT,
+      payload TEXT,
+      district TEXT,
+      trade TEXT,
+      course_name TEXT,
+      event_date TEXT,
+      person_age INTEGER,
+      person_category TEXT,
+      placement_status TEXT,
+      pre_income TEXT,
+      post_income TEXT,
+      pre_income_individual TEXT,
+      post_income_individual TEXT,
+      mentorship_training_sessions TEXT,
+      training_type TEXT,
+      mix_duration TEXT,
+      phase TEXT,
+      funding_support TEXT,
+      funding_organisation TEXT,
+      funding_amount TEXT,
+      grand_total INTEGER,
       created_at TEXT,
       updated_at TEXT,
       synced_at TEXT,
       added_by TEXT
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS skilltracking_program (
+      program_id TEXT PRIMARY KEY,
+      program_name TEXT,
+      code TEXT,
+      status TEXT,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS skilltracking_kkp_pre_and_post (
+      id TEXT PRIMARY KEY,
+      financial_year TEXT,
+      location_name TEXT,
+      value_name TEXT,
+      pre_kkp TEXT,
+      post_kkp TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      synced_at TEXT,
+      added_by TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_health_beneficiary_year ON health_beneficiary_year (year)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_health_disease_summary_year ON health_disease_summary (year)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_health_symptom_summary_year ON health_symptom_summary (year)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_education_mixprogram_year ON education_mixprogram (year, program_id)`);
+  const extraIndexes = [
+    `CREATE INDEX IF NOT EXISTS idx_health_disease_patients_year ON health_disease_patients (year, disease_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_health_profile_patients_geo ON health_profile_patients (state_id, district_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_health_appointments_created ON health_patient_appointments (created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_education_mixprogram_students ON education_mixprogram (students_total DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_skilltracking_kkp_year ON skilltracking_kkp_pre_and_post (financial_year)`
+  ];
+  for (const sql of extraIndexes) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      console.warn('[syncEngine] index skipped:', err.message);
+    }
+  }
   try {
     await ensureColumn('education_program', 'activity_count', 'TEXT');
     await ensureColumn('education_program', 'total_interventions', 'TEXT');
   } catch (err) {
     console.warn('[syncEngine] Could not add education_program extra columns:', err.message);
+  }
+  const mixExtra = [
+    ['number_of_farmers', 'INTEGER'],
+    ['activity_name', 'TEXT'],
+    ['month', 'TEXT'],
+    ['fellows', 'INTEGER'],
+    ['values_taught', 'TEXT'],
+    ['sessions_per_value', 'INTEGER'],
+    ['total_sessions', 'INTEGER'],
+    ['age_group', 'TEXT'],
+    ['number_of_schools', 'INTEGER'],
+    ['number_of_teachers', 'INTEGER'],
+    ['category_gen', 'INTEGER'],
+    ['category_sc_st', 'INTEGER'],
+    ['category_obc', 'INTEGER'],
+    ['category_ebc', 'INTEGER'],
+    ['category_minorities', 'INTEGER'],
+    ['person_gender', 'TEXT'],
+    ['payload', 'TEXT'],
+    ['district', 'TEXT'],
+    ['trade', 'TEXT'],
+    ['course_name', 'TEXT'],
+    ['event_date', 'TEXT'],
+    ['person_age', 'INTEGER'],
+    ['person_category', 'TEXT'],
+    ['placement_status', 'TEXT'],
+    ['pre_income', 'TEXT'],
+    ['post_income', 'TEXT'],
+    ['pre_income_individual', 'TEXT'],
+    ['post_income_individual', 'TEXT'],
+    ['mentorship_training_sessions', 'TEXT'],
+    ['training_type', 'TEXT'],
+    ['mix_duration', 'TEXT'],
+    ['phase', 'TEXT'],
+    ['funding_support', 'TEXT'],
+    ['funding_organisation', 'TEXT'],
+    ['funding_amount', 'TEXT'],
+    ['grand_total', 'INTEGER']
+  ];
+  for (const [col, type] of mixExtra) {
+    try {
+      await ensureColumn('education_mixprogram', col, type);
+    } catch (err) {
+      console.warn(`[syncEngine] Could not add education_mixprogram.${col}:`, err.message);
+    }
+  }
+  try {
+    await pool.query(`
+      UPDATE education_mixprogram AS a
+      SET id = a.program_id || '_' || a.id
+      WHERE a.program_id IS NOT NULL
+        AND BTRIM(a.program_id) <> ''
+        AND a.id IS NOT NULL
+        AND a.id NOT LIKE a.program_id || '_%'
+        AND NOT EXISTS (
+          SELECT 1 FROM education_mixprogram b
+          WHERE b.id = a.program_id || '_' || a.id
+        )
+    `);
+  } catch (err) {
+    console.warn('[syncEngine] mixprogram id namespace skipped:', err.message);
+  }
+  try {
+    await pool.query(`
+      UPDATE education_mixprogram
+      SET
+        district = COALESCE(NULLIF(TRIM(district), ''), payload::json->>'district'),
+        trade = COALESCE(NULLIF(TRIM(trade), ''), payload::json->>'trade'),
+        course_name = COALESCE(NULLIF(TRIM(course_name), ''), payload::json->>'course_name'),
+        event_date = COALESCE(NULLIF(TRIM(event_date), ''), payload::json->>'date'),
+        person_age = COALESCE(
+          person_age,
+          CASE WHEN payload::json->>'age' ~ '^[0-9]+$' THEN (payload::json->>'age')::integer ELSE NULL END
+        ),
+        person_category = COALESCE(NULLIF(TRIM(person_category), ''), payload::json->>'category'),
+        person_gender = COALESCE(NULLIF(TRIM(person_gender), ''), payload::json->>'gender'),
+        placement_status = COALESCE(NULLIF(TRIM(placement_status), ''), payload::json->>'placement_status'),
+        pre_income = COALESCE(NULLIF(TRIM(pre_income), ''), payload::json->>'pre_income'),
+        post_income = COALESCE(NULLIF(TRIM(post_income), ''), payload::json->>'post_income'),
+        pre_income_individual = COALESCE(NULLIF(TRIM(pre_income_individual), ''), payload::json->>'pre_income_individual'),
+        post_income_individual = COALESCE(NULLIF(TRIM(post_income_individual), ''), payload::json->>'post_income_individual'),
+        mentorship_training_sessions = COALESCE(NULLIF(TRIM(mentorship_training_sessions), ''), payload::json->>'mentorship_training_sessions'),
+        training_type = COALESCE(NULLIF(TRIM(training_type), ''), payload::json->>'training_type'),
+        mix_duration = COALESCE(NULLIF(TRIM(mix_duration), ''), payload::json->>'duration'),
+        phase = COALESCE(NULLIF(TRIM(phase), ''), payload::json->>'phase'),
+        funding_support = COALESCE(NULLIF(TRIM(funding_support), ''), payload::json->>'funding_support'),
+        funding_organisation = COALESCE(NULLIF(TRIM(funding_organisation), ''), payload::json->>'funding_organisation'),
+        funding_amount = COALESCE(NULLIF(TRIM(funding_amount), ''), payload::json->>'funding_amount'),
+        grand_total = COALESCE(
+          grand_total,
+          CASE WHEN payload::json->>'grand_total' ~ '^[0-9]+$' THEN (payload::json->>'grand_total')::integer ELSE NULL END
+        )
+      WHERE payload IS NOT NULL AND LEFT(BTRIM(payload), 1) = '{'
+    `);
+  } catch (err) {
+    console.warn('[syncEngine] mixprogram payload backfill skipped:', err.message);
   }
 }
 
@@ -212,7 +449,7 @@ async function ensureEnvelopeTables() {
 async function upsertRecords(tableName, records, uniqueField, fieldMap) {
   if (!records || records.length === 0) return 0;
   
-  const columns = Object.values(fieldMap);
+  const columns = [...new Set(Object.values(fieldMap))];
   const allColumns = [...columns, 'synced_at', 'added_by'];
   let upsertedCount = 0;
   
@@ -292,21 +529,38 @@ export const SYNC_PLANS = {
       payload: { program_id: MIXPROGRAM_ID, year: MIXPROGRAM_YEARS[0] },
       endpoint: 'mixprogram.php',
       uniqueField: 'id',
-      yearPayloads: MIXPROGRAM_YEARS.map((year) => ({ program_id: MIXPROGRAM_ID, year })),
+      chainFromProgramCatalog: true,
+      yearPayloads: MIXPROGRAM_YEARS.map((year) => ({ year })),
       fieldMap: {
         id: 'id', program_id: 'program_id', sno: 'sno', location: 'location',
         block: 'block', school_name: 'school_name', year: 'year',
         students_male: 'students_male', students_female: 'students_female',
         students_total: 'students_total', teachers_reached: 'teachers_reached',
         theme_touched: 'theme_touched', class: 'class', status: 'status',
-        created_at: 'created_at', updated_at: 'updated_at'
+        created_at: 'created_at', updated_at: 'updated_at',
+        number_of_farmers: 'number_of_farmers', activity_name: 'activity_name',
+        month: 'month', fellows: 'fellows', values_taught: 'values_taught',
+        sessions_per_value: 'sessions_per_value', total_sessions: 'total_sessions',
+        age_group: 'age_group', number_of_schools: 'number_of_schools',
+        number_of_teachers: 'number_of_teachers', category_gen: 'category_gen',
+        category_sc_st: 'category_sc_st', category_obc: 'category_obc',
+        category_ebc: 'category_ebc', category_minorities: 'category_minorities',
+        gender: 'person_gender', payload: 'payload',
+        district: 'district', trade: 'trade', course_name: 'course_name',
+        date: 'event_date', age: 'person_age', category: 'person_category',
+        placement_status: 'placement_status', pre_income: 'pre_income',
+        post_income: 'post_income', pre_income_individual: 'pre_income_individual',
+        post_income_individual: 'post_income_individual',
+        mentorship_training_sessions: 'mentorship_training_sessions',
+        training_type: 'training_type', duration: 'mix_duration', phase: 'phase',
+        funding_support: 'funding_support', funding_organisation: 'funding_organisation',
+        funding_amount: 'funding_amount', grand_total: 'grand_total'
       }
     },
     {
       table: 'education_assessment',
       optional: true,
-      payload: { module_type: 'education', project: 'education_program', table_name: 'education_assessment' },
-      endpoint: 'education.php',
+      skipPhp: true,
       uniqueField: 'assessment_id',
       fieldMap: {
         id: 'assessment_id', program_id: 'program_id',
@@ -319,8 +573,7 @@ export const SYNC_PLANS = {
     {
       table: 'education_muskaan_assessment',
       optional: true,
-      payload: { module_type: 'education', project: 'education_program', table_name: 'education_muskaan_assessment' },
-      endpoint: 'education.php',
+      skipPhp: true,
       uniqueField: 'assessment_id',
       fieldMap: {
         id: 'assessment_id', school_id: 'school_id',
@@ -399,7 +652,7 @@ export const SYNC_PLANS = {
       uniqueField: 'patient_id',
       useDateRange: true,
       dateColumn: 'created_at',
-      chunkSizeDays: 31,
+      chunkSizeDays: 7,
       fieldMap: {
         patient_id: 'patient_id', user_id: 'user_id', full_name: 'full_name',
         gender: 'gender', age: 'age', age_month: 'age_month', dob: 'dob',
@@ -458,7 +711,7 @@ export const SYNC_PLANS = {
       table: 'health_beneficiary_year',
       endpoint: 'health_beneficiary.php',
       uniqueField: 'year',
-      yearPayloads: HEALTH_SUMMARY_YEARS.map((year) => ({ module_type: 'health', year })),
+      yearPayloads: HEALTH_BENEFICIARY_YEARS.map((year) => ({ module_type: 'health', year })),
       fieldMap: {
         year: 'year',
         total_beneficiary: 'total_beneficiary',
@@ -502,6 +755,19 @@ export const SYNC_PLANS = {
     }
   ],
   livelihood: [
+    {
+      table: 'skilltracking_program',
+      optional: true,
+      payload: { module_type: 'livelyhood', project: 'skilltracting', table_name: 'program' },
+      endpoint: 'skilltracking.php',
+      uniqueField: 'program_id',
+      fieldMap: {
+        program_id: 'program_id',
+        program_name: 'program_name',
+        code: 'code',
+        status: 'status'
+      }
+    },
     {
       table: 'skilltracking_state',
       payload: { module_type: 'livelyhood', project: 'skilltracting', table_name: 'state' },
@@ -677,6 +943,22 @@ export const SYNC_PLANS = {
         financial_year: 'financial_year', status: 'status',
         created_at: 'created_at'
       }
+    },
+    {
+      table: 'skilltracking_kkp_pre_and_post',
+      payload: { module_type: 'livelyhood', project: 'skilltracting', table_name: 'kkp_pre_and_post' },
+      endpoint: 'skilltracking.php',
+      uniqueField: 'id',
+      fieldMap: {
+        id: 'id',
+        financial_year: 'financial_year',
+        location_name: 'location_name',
+        value_name: 'value_name',
+        pre_kkp: 'pre_kkp',
+        post_kkp: 'post_kkp',
+        created_at: 'created_at',
+        updated_at: 'updated_at'
+      }
     }
   ]
 };
@@ -795,13 +1077,38 @@ function decorateRecords(plan, records, yearHint) {
       }
     });
   }
+  if (plan.table === 'skilltracking_program') {
+    records.forEach((rec) => {
+      if (rec.program && typeof rec.program === 'object') {
+        rec.program_id = rec.program_id || rec.program.id || rec.program.program_id;
+        rec.program_name = rec.program_name || rec.program.name || rec.program.program_name;
+        rec.code = rec.code || rec.program.code || rec.program.program_code;
+      }
+      rec.program_id = rec.program_id || rec.id || rec.ProgramId;
+      rec.program_name = rec.program_name || rec.name;
+      rec.code = rec.code || rec.program_code;
+    });
+  }
   if (plan.table === 'education_mixprogram') {
     records.forEach((rec) => {
       if (yearHint && rec.year == null) rec.year = yearHint;
-      if (!rec.id) {
-        rec.id = [rec.program_id || MIXPROGRAM_ID, rec.year || yearHint, rec.sno, rec.school_name]
-          .filter(Boolean)
-          .join('_');
+      const pid = String(rec.program_id || MIXPROGRAM_ID);
+      rec.program_id = pid;
+      const rawId = rec.id;
+      if (rawId == null || String(rawId).trim() === '') {
+        rec.id = [pid, rec.year || yearHint, rec.sno, rec.school_name].filter(Boolean).join('_');
+      } else if (!String(rawId).startsWith(`${pid}_`)) {
+        rec.id = `${pid}_${rawId}`;
+      }
+      const pii = new Set(['name', 'phone_number', 'phone', 'address', 'dob', 'candidate_name']);
+      try {
+        const slim = {};
+        for (const [key, val] of Object.entries(rec)) {
+          if (!pii.has(key) && key !== 'payload') slim[key] = val;
+        }
+      rec.payload = JSON.stringify(slim).substring(0, 8000);
+      } catch {
+        rec.payload = null;
       }
     });
   }
@@ -839,6 +1146,51 @@ async function ingestRecords(plan, records, timeout, maxRetries) {
   return upsertRecords(plan.table, filtered, plan.uniqueField, plan.fieldMap);
 }
 
+function catalogProgramId(row) {
+  if (!row || typeof row !== 'object') return null;
+  if (row.program && typeof row.program === 'object') {
+    const nested = row.program.program_id || row.program.id;
+    if (nested != null && nested !== '' && nested !== 0 && nested !== '0') return String(nested);
+  }
+  const val = row.program_id || row.id || row.ProgramId;
+  if (val == null || val === '' || val === 0 || val === '0') return null;
+  return String(val);
+}
+
+async function loadProgramCatalog(timeout, maxRetries) {
+  try {
+    const local = await pool.query(
+      `SELECT program_id, program_name, code, status
+       FROM skilltracking_program
+       WHERE program_id IS NOT NULL AND program_id <> ''`
+    );
+    if (local.rows.length) {
+      console.log(`[syncEngine] mixprogram catalog from Postgres skilltracking_program (${local.rows.length} rows)`);
+      return { rows: local.rows, source: 'postgres' };
+    }
+  } catch (err) {
+    console.warn('[syncEngine] local skilltracking_program unavailable:', err.message);
+  }
+
+  for (const tableName of ['program', 'programs']) {
+    try {
+      const rows = await fetchWithRetry(
+        'skilltracking.php',
+        { module_type: 'livelyhood', project: 'skilltracting', table_name: tableName },
+        timeout,
+        maxRetries
+      );
+      if (rows && rows.length) {
+        console.log(`[syncEngine] mixprogram catalog from skilltracking.php table_name=${tableName} (${rows.length} rows)`);
+        return { rows, source: `skilltracking.php:${tableName}` };
+      }
+    } catch (err) {
+      console.warn(`[syncEngine] skilltracking table_name=${tableName} skipped:`, err.message);
+    }
+  }
+  return { rows: [], source: 'empty' };
+}
+
 // Main execution function
 export async function syncModule(moduleName, forceFull = false) {
   const plans = SYNC_PLANS[moduleName];
@@ -862,6 +1214,14 @@ export async function syncModule(moduleName, forceFull = false) {
       console.warn(`[syncEngine] Skipping sync for geographic table ${plan.table} because a parent geography table failed in this run.`);
       await writeSyncLog(moduleName, plan.table, 0, 0, 'error', 'Skipped due to parent geography sync failure', startedAt);
       summary.push({ table: plan.table, fetched: 0, upserted: 0, status: 'error', error: 'Skipped due to parent geography sync failure' });
+      continue;
+    }
+
+    if (plan.skipPhp) {
+      const skipMsg = 'No PHP table; manual Postgres entry only (API rejects this table_name).';
+      console.log(`[syncEngine] Skipping PHP for ${plan.table}: ${skipMsg}`);
+      await writeSyncLog(moduleName, plan.table, 0, 0, 'skipped', skipMsg, startedAt);
+      summary.push({ table: plan.table, fetched: 0, upserted: 0, status: 'skipped', error: skipMsg });
       continue;
     }
 
@@ -913,7 +1273,7 @@ export async function syncModule(moduleName, forceFull = false) {
             from_date: chunk.from,
             to_date: chunk.to
           };
-          let chunkRecords = await fetchWithRetry(plan.endpoint, chunkPayload, timeout, maxRetries);
+          let chunkRecords = await fetchDatedChunk(plan.endpoint, chunkPayload, timeout, maxRetries);
           if (chunkRecords && chunkRecords.length > 0) {
             totalFetched += chunkRecords.length;
             totalUpserted += await ingestRecords(plan, chunkRecords);
@@ -921,20 +1281,52 @@ export async function syncModule(moduleName, forceFull = false) {
         }
       } else if (plan.chainFromDiseaseSummary) {
         const maxIds = Number(process.env.DISEASE_PATIENT_MAX_IDS) || 12;
-        const limit = process.env.DISEASE_PATIENT_LIMIT || '50';
+        const pageSize = 20;
+        const maxPages = Math.max(1, Number(process.env.DISEASE_PATIENT_MAX_PAGES) || 3);
         for (const year of HEALTH_SUMMARY_YEARS) {
           const summary = await fetchWithRetry('health_desease.php', { module_type: 'health', year }, timeout, maxRetries);
           const ids = [...new Set(summary.map((r) => r.disease_id || r.id).filter(Boolean))].slice(0, maxIds);
           for (const diseaseId of ids) {
-            let records = await fetchWithRetry(plan.endpoint, {
-              module_type: 'health',
-              year,
-              disease_id: String(diseaseId),
-              Limit: String(limit),
-              offset: '0'
-            }, timeout, maxRetries);
+            for (let page = 0; page < maxPages; page++) {
+              let records = await fetchWithRetry(plan.endpoint, {
+                module_type: 'health',
+                year,
+                disease_id: String(diseaseId),
+                Limit: String(pageSize),
+                offset: String(page * pageSize)
+              }, timeout, maxRetries);
+              records = decorateRecords(plan, records, year);
+              records.forEach((rec) => { rec.disease_id = rec.disease_id || String(diseaseId); });
+              totalFetched += records.length;
+              if (records.length > 0) {
+                totalUpserted += await ingestRecords(plan, records);
+              }
+              if (!records.length || records.length < pageSize) break;
+            }
+          }
+        }
+      } else if (plan.chainFromProgramCatalog) {
+        const { rows: catalogRows, source: catalogSource } = await loadProgramCatalog(timeout, maxRetries);
+        if (catalogRows.length && catalogSource !== 'postgres') {
+          const catalogPlan = SYNC_PLANS.livelihood.find((p) => p.table === 'skilltracking_program');
+          if (catalogPlan) {
+            await ingestRecords(catalogPlan, catalogRows);
+          }
+        }
+        const ids = [...new Set(catalogRows.map(catalogProgramId).filter(Boolean))];
+        const programIds = ids.length ? ids : [MIXPROGRAM_ID];
+        if (!ids.length) {
+          console.warn(`[syncEngine] skilltracking program catalog empty; mixprogram falling back to EDU_PROGRAM_ID=${MIXPROGRAM_ID}`);
+        } else {
+          console.log(`[syncEngine] mixprogram using ${programIds.length} program_id(s) from ${catalogSource}`);
+        }
+        const years = (plan.yearPayloads || []).map((p) => p.year).filter(Boolean);
+        const mixYears = years.length ? years : MIXPROGRAM_YEARS;
+        for (const programId of programIds) {
+          for (const year of mixYears) {
+            let records = await fetchWithRetry(plan.endpoint, { program_id: programId, year }, timeout, maxRetries);
             records = decorateRecords(plan, records, year);
-            records.forEach((rec) => { rec.disease_id = rec.disease_id || String(diseaseId); });
+            records.forEach((rec) => { rec.program_id = rec.program_id || programId; });
             totalFetched += records.length;
             if (records.length > 0) {
               totalUpserted += await ingestRecords(plan, records);
@@ -988,9 +1380,9 @@ export async function syncAll(forceFull = false) {
   }
   globalSyncInProgress = true;
   try {
+    const livelihoodResult = await syncModule('livelihood', forceFull);
     const educationResult = await syncModule('education', forceFull);
     const healthResult = await syncModule('health', forceFull);
-    const livelihoodResult = await syncModule('livelihood', forceFull);
     return {
       education: educationResult,
       health: healthResult,

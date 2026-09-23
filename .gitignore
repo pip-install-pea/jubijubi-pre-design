@@ -13,7 +13,15 @@
 # testing
 /coverage
 db/
-scripts/
+scripts/*
+!scripts/probe-apis.mjs
+!scripts/probe-apis-followup.mjs
+!scripts/create-enterprise-market-access.js
+!scripts/sync.mjs
+!scripts/check-system.cjs
+
+# Live PHP probe dumps (may contain personal data)
+/api-samples/
 # next.js
 /.next/
 /out/
@@ -33,6 +41,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env
+
+# local Postgres data directory
+/.pgdata/
+
 
 
 # vercel

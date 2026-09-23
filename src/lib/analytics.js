@@ -99,6 +99,39 @@ export function validDateClause(col) {
   return `(${col} IS NOT NULL AND ${col}::text !~ '^(0000|1970-01-01)' AND SUBSTR(${col}::text, 1, 4) NOT IN ('0000', '1970'))`;
 }
 
+/** Drop district so a selected district can be compared with peers in the same filter set. */
+export function stripDistrict(filters) {
+  if (!filters) return filters;
+  return { ...filters, district_id: null };
+}
+
+/** Drop state and district for a programme-wide peer set. Year/gender/FY stay. */
+export function stripGeo(filters) {
+  if (!filters) return filters;
+  return { ...filters, state_id: null, district_id: null };
+}
+
+export function withPeerAverages(rows, stateAverage, programmeAverage) {
+  const state = Number(stateAverage) || 0;
+  const prog = Number(programmeAverage) || 0;
+  return (rows || []).map((r) => {
+    const value = Number(r.value) || 0;
+    return {
+      ...r,
+      value,
+      vs_state_pct: state > 0 ? Number((((value - state) / state) * 100).toFixed(1)) : null,
+      vs_programme_pct: prog > 0 ? Number((((value - prog) / prog) * 100).toFixed(1)) : null,
+      below_peers: state > 0 ? value < state : (prog > 0 && value < prog)
+    };
+  });
+}
+
+export function mean(values) {
+  const list = (values || []).map(Number).filter((n) => Number.isFinite(n));
+  if (!list.length) return 0;
+  return list.reduce((a, b) => a + b, 0) / list.length;
+}
+
 export function getFiltersFromRequest(req) {
   const url = new URL(req.url);
   return {

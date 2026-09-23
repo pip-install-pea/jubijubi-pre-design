@@ -2,11 +2,16 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import Link from 'next/link';
 import RankingBar from '../../../components/charts/RankingBar';
 import BrandLine from '../../../components/charts/BrandLine';
+import EChart, {
+  treemapOption,
+  scatterOption,
+  sankeyOption,
+  roseOption
+} from '../../../components/charts/EChart';
+import FarmerGrowth from '../../../components/charts/FarmerGrowth';
 import DrilldownModal from '../../../components/DrilldownModal';
-import { NAVY, LIME } from '../../../lib/chartTheme';
 
 export default function EnterprisePage() {
   const [data, setData] = useState(null);
@@ -31,7 +36,25 @@ export default function EnterprisePage() {
         axios.get(`/api/livelihood/enterprise/market_access?${query}`),
         axios.get(`/api/livelihood/enterprise/funding?${query}`)
       ]);
-      setData({ mentorship: mentorship.data, market: market.data, funding: funding.data });
+      let farmers = { data: { status: 'no_data', farmers: 0, by_location: [] } };
+      let didi = { data: { status: 'no_data' } };
+      try {
+        farmers = await axios.get(`/api/livelihood/mixprogram/farmers?${query}`);
+      } catch {
+        farmers = { data: { status: 'no_data', farmers: 0, by_location: [] } };
+      }
+      try {
+        didi = await axios.get(`/api/livelihood/mixprogram/didi?${query}`);
+      } catch {
+        didi = { data: { status: 'no_data' } };
+      }
+      setData({
+        mentorship: mentorship.data,
+        market: market.data,
+        funding: funding.data,
+        farmers: farmers.data,
+        didi: didi.data
+      });
     } catch (err) {
       console.error('Enterprise data load failed', err);
     } finally {
@@ -63,19 +86,131 @@ export default function EnterprisePage() {
 
   return (
     <div>
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Livelihood — Enterprise</h2>
-        <p className="section-sub">Members, market agencies, and FY profit — not mentorship hours or funding</p>
-      </div>
-
-      <div className="page-tabs" style={{ marginBottom: '24px' }}>
-        <Link href="/livelihood/skilling" className="tab">Skilling</Link>
-        <Link href="/livelihood/placement" className="tab">Placement</Link>
-        <Link href="/livelihood/enterprise" className="tab tab--active">Enterprise</Link>
-      </div>
 
       {data && (
         <>
+          {data.farmers?.status === 'ok' && ((data.farmers.by_year || []).length > 0 || data.farmers.farmers > 0) && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Jubifarm farmers</h3>
+              </div>
+              <div className="card-body">
+                <p className="chart-caption">Each year is a running total, not new farmers only.</p>
+                <FarmerGrowth
+                  byYear={data.farmers.by_year || []}
+                  locationsByYear={data.farmers.locations_by_year || {}}
+                  onLocationClick={(name) => handleDrilldown('mix_farmer_location', name)}
+                />
+              </div>
+            </div>
+          )}
+
+          {data.didi?.status === 'ok' && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi Ka Dukan</h3>
+              </div>
+              <div className="card-body">
+                <div className="kpi-grid">
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmt(data.didi.people)}</div>
+                      <div className="kpi-label">People</div>
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_pre_ind || 0))}</div>
+                      <div className="kpi-label">Mean pre individual</div>
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_post_ind || 0))}</div>
+                      <div className="kpi-label">Mean post individual</div>
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_post || 0))}</div>
+                      <div className="kpi-label">Mean post household</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="card-row" style={{ marginTop: '16px' }}>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>Phase to training type</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={sankeyOption(data.didi.sankey?.nodes, data.didi.sankey?.links)}
+                        height={360}
+                        onPoint={(p) => p.name && handleDrilldown('mix_didi_phase', p.name.replace(/^Training: /, ''))}
+                      />
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>Pre vs post individual income</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={scatterOption(data.didi.scatter, { xName: 'Pre individual', yName: 'Post individual' })}
+                        caption="pre_income_individual vs post_income_individual. Household post_income is the KPI above, not this scatter."
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="card-row" style={{ marginTop: '16px' }}>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>By location</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={treemapOption(data.didi.by_location)}
+                        onPoint={(p) => p.name && handleDrilldown('mix_didi_location', p.name)}
+                      />
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>Gender</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={roseOption(data.didi.by_gender)}
+                        onPoint={(p) => p.name && handleDrilldown('mix_didi_gender', p.name)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(data.farmers?.other || []).map((prog) => (
+            <div className="card" style={{ marginBottom: '24px' }} key={prog.program_id}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>{prog.label}</h3>
+              </div>
+              <div className="card-body">
+                <div className="kpi-grid">
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmt(prog.rows)}</div>
+                      <div className="kpi-label">Rows</div>
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{fmt(prog.locations)}</div>
+                      <div className="kpi-label">Locations</div>
+                    </div>
+                  </div>
+                </div>
+                {(prog.by_location || []).length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <RankingBar items={prog.by_location} />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
           <div className="card" style={{ marginBottom: '24px' }}>
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Enterprise members</h3></div>
             <div className="card-body">
@@ -84,13 +219,23 @@ export default function EnterprisePage() {
                   <div className="kpi-body">
                     <div className="kpi-value">{fmt(data.mentorship?.total_members)}</div>
                     <div className="kpi-label">Total members</div>
-                    <p className="kpi-caption">COUNT(enterprise_support.member_id). Not mentorship sessions or hours.</p>
                   </div>
                 </div>
                 <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('enterprise_active')}>
                   <div className="kpi-body">
                     <div className="kpi-value">{fmt(data.mentorship?.active_members)}</div>
                     <div className="kpi-label">Active members</div>
+                  </div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-body">
+                    <div className="kpi-value">{
+                      data.mentorship?.total_members
+                        ? `${(((Number(data.mentorship.active_members) || 0) / Number(data.mentorship.total_members)) * 100).toFixed(1)}%`
+                        : '—'
+                    }</div>
+                    <div className="kpi-label">Active share</div>
+                    <p className="kpi-caption">Active members / total</p>
                   </div>
                 </div>
                 <div className="kpi-card">
@@ -122,8 +267,7 @@ export default function EnterprisePage() {
                 <div className="kpi-card">
                   <div className="kpi-body">
                     <div className="kpi-value">{fmtINR(data.market?.total_sales_generated)}</div>
-                    <div className="kpi-label">Parsed sales estimate</div>
-                    <p className="kpi-caption">{data.market?.sales_caption || 'Parsed from sales_generated_average text, not an audited total.'}</p>
+                    <div className="kpi-label">Sales estimate</div>
                   </div>
                 </div>
               </div>
@@ -134,8 +278,6 @@ export default function EnterprisePage() {
                   <div className="card-body">
                     <RankingBar
                       items={(data.market?.top_agencies || []).map(r => ({ label: r.name, value: r.count }))}
-                      color={NAVY}
-                      caption="Record counts by agency_name."
                     />
                   </div>
                 </div>
@@ -144,7 +286,6 @@ export default function EnterprisePage() {
                   <div className="card-body">
                     <RankingBar
                       items={(data.market?.market_access_type_breakdown || []).map(r => ({ label: r.market_access_type, value: r.count }))}
-                      color={LIME}
                     />
                   </div>
                 </div>
@@ -160,14 +301,12 @@ export default function EnterprisePage() {
                   <div className="kpi-body">
                     <div className="kpi-value">{data.funding?.fy_covered || '—'}</div>
                     <div className="kpi-label">Financial years</div>
-                    <p className="kpi-caption">FY strings are not the same as calendar year.</p>
                   </div>
                 </div>
                 <div className="kpi-card">
                   <div className="kpi-body">
                     <div className="kpi-value">{fmtINR(data.funding?.latest_fy_profit)}</div>
                     <div className="kpi-label">Latest FY profit</div>
-                    <p className="kpi-caption">enterprise_support_monitoring.profit — not funding agency/amount/type.</p>
                   </div>
                 </div>
                 <div className="kpi-card">
@@ -182,7 +321,6 @@ export default function EnterprisePage() {
                 values={data.funding?.fy_breakdown?.map(r => r.profit) || []}
                 rupee
                 label="Profit (₹)"
-                caption="Profit, not funding. MA_enterprise_support_monitoring is not synced (API error)."
                 onPointClick={(_, __, idx) => {
                   const fy = data.funding?.fy_breakdown?.[idx]?.fy;
                   handleDrilldown('enterprise_fy_profit', fy);
@@ -196,7 +334,7 @@ export default function EnterprisePage() {
               <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Market access & agency partnerships</h3>
                 <span className="badge badge--success" style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', background: 'var(--navy)', color: 'white' }} onClick={() => handleDrilldown('market_access')}>
-                  View raw data
+                  View details
                 </span>
               </div>
               <div className="card-body">

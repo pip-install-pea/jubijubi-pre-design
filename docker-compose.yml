@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: jubilant-postgres
+    environment:
+      POSTGRES_USER: jubilant
+      POSTGRES_PASSWORD: jubilant
+      POSTGRES_DB: jubilant
+    ports:
+      - "5433:5432"
+    volumes:
+      - jubilant_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jubilant -d jubilant"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  jubilant_pgdata:

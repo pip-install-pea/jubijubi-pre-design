@@ -3,13 +3,17 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
-import { Heart, Leaf, Buildings, GraduationCap } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
+import EChart, { groupedBarOption } from '../components/charts/EChart';
+import RankingBar from '../components/charts/RankingBar';
+import FarmerGrowth from '../components/charts/FarmerGrowth';
+import DrilldownModal from '../components/DrilldownModal';
 
 export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
   const { user } = useAuth();
 
   useEffect(() => {
@@ -37,13 +41,25 @@ export default function Dashboard() {
   }, [fetchSummary]);
 
   const fmt = (n) => {
-    if (!n) return '0';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n.toString();
+    const v = Number(n) || 0;
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+    return v.toLocaleString('en-IN');
+  };
+
+  const openDrill = (title, apiUrl, type, value, extra = {}) => {
+    setModal({
+      isOpen: true,
+      title,
+      apiUrl,
+      params: { ...filters, type, value, ...extra }
+    });
   };
 
   const isAdmin = user?.role === 'super_admin' || user?.role === 'admin';
+  const showHealth = isAdmin || user?.thematic === 'health';
+  const showLive = isAdmin || user?.thematic === 'livelihood';
+  const showEdu = isAdmin || user?.thematic === 'education';
 
   if (loading) {
     return (
@@ -53,92 +69,122 @@ export default function Dashboard() {
     );
   }
 
+  const schoolStudents = summary?.school_count ? summary.school_students : summary?.education_students;
+  const liveLabels = (summary?.livelihood_counts || []).map((r) => r.label);
+  const liveValues = (summary?.livelihood_counts || []).map((r) => r.value);
+
   return (
     <div>
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Overview</h2>
-        <p className="section-sub">Cross-programme counts. Location filters are not applied here — health and livelihood geographies do not share IDs.</p>
-      </div>
-
-      <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-wrap" style={{ backgroundColor: 'rgba(62, 181, 240, 0.15)', color: 'var(--navy)' }}>
-              <Heart size={20} weight="fill" />
-            </div>
-          </div>
-          <div className="kpi-body">
-            <div className="kpi-value">{fmt(summary?.health_patients)}</div>
-            <div className="kpi-label">Synced health patients</div>
-            <p className="kpi-caption">Patient table, not the year envelope.</p>
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-wrap" style={{ backgroundColor: 'rgba(141, 198, 63, 0.18)', color: 'var(--lime)' }}>
-              <Leaf size={20} weight="fill" />
-            </div>
-          </div>
-          <div className="kpi-body">
-            <div className="kpi-value">{fmt(summary?.livelihood_roster ?? summary?.livelihood_trained)}</div>
-            <div className="kpi-label">Skill roster</div>
-            <p className="kpi-caption">COUNT(skilltracking_persons), not “trained”.</p>
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-wrap" style={{ backgroundColor: 'rgba(240, 196, 25, 0.2)', color: 'var(--navy)' }}>
-              <Buildings size={20} weight="fill" />
-            </div>
-          </div>
-          <div className="kpi-body">
-            <div className="kpi-value">{fmt(summary?.enterprise_members)}</div>
-            <div className="kpi-label">Enterprise members</div>
-          </div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-header">
-            <div className="kpi-icon-wrap" style={{ backgroundColor: 'rgba(30, 79, 163, 0.12)', color: 'var(--sky)' }}>
-              <GraduationCap size={20} weight="fill" />
-            </div>
-          </div>
-          <div className="kpi-body">
-            <div className="kpi-value">{fmt(summary?.education_students ?? summary?.education_sessions)}</div>
-            <div className="kpi-label">Education students</div>
-            <p className="kpi-caption">SUM(student_count) with trimmed programme names.</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="section-title">Programmes</div>
       <div className="programme-links">
-        {(isAdmin || user?.thematic === 'health') && (
+        {showHealth && (
           <Link href="/health" className="prog-card prog-card--health">
             <h3>Health</h3>
-            <p>Year envelope, disease mix, patient-table inclusion</p>
-            <span className="prog-arrow">→</span>
+            <div className="prog-stat">{fmt(summary?.health_patients)}</div>
+            <p>Patient records in the selected year</p>
+            <span className="prog-arrow">Open Health →</span>
           </Link>
         )}
-
-        {(isAdmin || user?.thematic === 'livelihood') && (
+        {showLive && (
           <Link href="/livelihood/skilling" className="prog-card prog-card--livelihood">
             <h3>Livelihood</h3>
-            <p>Roster, placement monitor, enterprise members and profit</p>
-            <span className="prog-arrow">→</span>
+            <div className="prog-stat">{fmt(summary?.livelihood_roster)}</div>
+            <p>People on the skill roster. Enterprise, Didi, and farmers are separate lists below.</p>
+            <span className="prog-arrow">Open Livelihood →</span>
           </Link>
         )}
-
-        {(isAdmin || user?.thematic === 'education') && (
+        {showEdu && (
           <Link href="/education" className="prog-card prog-card--education">
             <h3>Education</h3>
-            <p>Students by programme. Assessments empty until live rows exist.</p>
-            <span className="prog-arrow">→</span>
+            <div className="prog-stat">{fmt(schoolStudents)}</div>
+            <p>
+              {summary?.school_count
+                ? `${Number(summary.school_count).toLocaleString('en-IN')} schools from school sheets`
+                : 'Programme rollup — school sheets empty for this filter'}
+            </p>
+            <span className="prog-arrow">Open Education →</span>
           </Link>
         )}
       </div>
+
+      {showHealth && (summary?.health_diseases || []).length > 0 && (
+        <div className="card" style={{ marginTop: '28px', marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Largest disease counts</h3>
+          </div>
+          <div className="card-body">
+            <RankingBar
+              items={summary.health_diseases}
+              maxItems={12}
+              caption="Patient counts from the disease summary. Not unique people across diseases."
+              onBarClick={(label) => label && openDrill(`Disease: ${label}`, '/api/health/drilldown', 'disease', label)}
+            />
+          </div>
+        </div>
+      )}
+
+      {showLive && liveLabels.length > 0 && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Livelihood lists</h3>
+          </div>
+          <div className="card-body">
+            <EChart
+              option={groupedBarOption(liveLabels, [{ label: 'Count', data: liveValues }])}
+              caption="These are different lists. Do not add them into one headcount."
+              onPoint={(p) => {
+                if (p.name === 'Skill roster') openDrill(p.name, '/api/livelihood/drilldown', 'persons', '');
+                else if (p.name === 'Skilling sheet') openDrill(p.name, '/api/livelihood/drilldown', 'mix_course', '');
+                else if (p.name === 'Enterprise members') openDrill(p.name, '/api/livelihood/drilldown', 'enterprise_total', '');
+                else if (p.name === 'Didi Ka Dukan') openDrill(p.name, '/api/livelihood/drilldown', 'mix_didi_location', '');
+                else if (p.name === 'Jubifarm farmers') openDrill(p.name, '/api/livelihood/drilldown', 'mix_farmer_location', '');
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {showLive && (summary?.farmers_by_year || []).length > 0 && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Jubifarm farmers by year</h3>
+          </div>
+          <div className="card-body">
+            <FarmerGrowth
+              byYear={summary.farmers_by_year}
+              locationsByYear={summary.farmer_locations_by_year}
+              onLocationClick={(name) => openDrill(`Farmers: ${name}`, '/api/livelihood/drilldown', 'mix_farmer_location', name)}
+            />
+          </div>
+        </div>
+      )}
+
+      {showEdu && (summary?.education_by_program || []).length > 0 && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Students by school programme</h3>
+          </div>
+          <div className="card-body">
+            <EChart
+              option={groupedBarOption(
+                summary.education_by_program.map((r) => r.label),
+                [{ label: 'Students', data: summary.education_by_program.map((r) => r.value) }],
+                { horizontal: true }
+              )}
+              height={Math.max(260, summary.education_by_program.length * 40)}
+              onPoint={(p) => p.name && openDrill(p.name, '/api/education/drilldown', 'mix_program', p.name)}
+            />
+          </div>
+        </div>
+      )}
+
+      <DrilldownModal
+        key={modal.apiUrl + JSON.stringify(modal.params)}
+        isOpen={modal.isOpen}
+        onClose={() => setModal({ ...modal, isOpen: false })}
+        title={modal.title}
+        apiUrl={modal.apiUrl}
+        params={modal.params}
+      />
     </div>
   );
 }

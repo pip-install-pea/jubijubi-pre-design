@@ -1,16 +1,37 @@
 # DATABASE CONNECTION
-# Local Postgres (no SSL):
+# Local Docker Postgres (compose maps 5433 because Windows PostgreSQL often owns 5432):
+DATABASE_URL=postgresql://jubilant:jubilant@localhost:5433/jubilant?sslmode=disable
+# Native / other local Postgres:
 # DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/jubilant?sslmode=disable
 # Neon / cloud (SSL required):
 # DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/dbname?sslmode=require
-DATABASE_URL=postgresql://username:password@localhost:5432/jubilant?sslmode=disable
 
 # Optional override: true | false. If unset, sslmode in DATABASE_URL wins.
 # DATABASE_SSL=false
 
+# Local sign-in when Postgres is not configured (health graphs still hit live PHP).
+DEV_LOGIN_USER=admin
+DEV_LOGIN_PASSWORD=admin
+DEV_LOGIN_ROLE=super_admin
+
 # SECRET KEYS FOR JWT/COOKIES
+# Production: set a long random JWT_SECRET. Do not leave the repo fallback.
 SECRET_KEY=your_fallback_secret_key_here
 JWT_SECRET=your_jwt_secret_key_here
+
+# Deploy
+# 1. Point DATABASE_URL at hosted Postgres (sslmode=require).
+# 2. From this folder: npm run db:migrate
+#    First admin: SEED_ADMIN=1 ADMIN_USER=... ADMIN_PASSWORD=... npm run db:migrate
+# 3. Load data from a laptop/worker (not Vercel): npm run db:sync
+# 4. Vercel env: DATABASE_URL, JWT_SECRET, NODE_ENV=production
+#    Do not set DEV_LOGIN_* on Vercel. AUTO_SYNC stays off there.
+# ADMIN_USER=admin
+# ADMIN_PASSWORD=change-me
+# ADMIN_EMAIL=admin@example.com
+# SEED_ADMIN=1
+# AUTO_SYNC=false
+# ALLOW_DEV_LOGIN=false
 
 # DATA SYNC CONFIG
 SYNC_INTERVAL_HOURS=6
@@ -18,14 +39,23 @@ SYNC_INTERVAL_MS=1800000
 API_TIMEOUT=30
 API_RETRY_COUNT=2
 
-# Health incremental sync starts here (not 2026-05-01). Lookup tables still send from_date/to_date.
+# Health incremental sync starts here. Lookup tables still send from_date/to_date.
 HEALTH_SYNC_START=2025-01-01
-HEALTH_SUMMARY_YEARS=2024,2025,2026
+# Optional. Defaults to last three calendar years.
+# HEALTH_SUMMARY_YEARS=2024,2025,2026
+# Optional. Defaults to 2016 through the current calendar year.
+# HEALTH_BENEFICIARY_YEARS=2016,2017,2018,2019,2020,2021,2022,2023,2024,2025,2026
 
-# Optional mixprogram.php payloads
+# Optional pin for dashboard default year / FY. Unset = current calendar year and current Indian FY (Apr–Mar).
+# HEALTH_DEFAULT_YEAR=2026
+# EDU_DEFAULT_YEAR=2026-27
+
+# mixprogram.php program_id comes from skilltracking.php table_name=program.
+# EDU_PROGRAM_ID is only the fallback when that catalog is empty.
 EDU_PROGRAM_ID=5
-EDU_MIX_YEARS=2024-25,2025-26
+# Optional. Defaults to current FY and previous FY.
+# EDU_MIX_YEARS=2025-26,2026-27
 
-# Bounded disease-patient pull during sync (PHP 500s on huge windows)
-DISEASE_PATIENT_LIMIT=50
-DISEASE_PATIENT_MAX_IDS=12
+# Bounded disease-patient pull during sync (PHP caps Limit at 20)
+# DISEASE_PATIENT_MAX_IDS=12
+# DISEASE_PATIENT_MAX_PAGES=3

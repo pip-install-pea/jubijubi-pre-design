@@ -10,7 +10,9 @@ export async function GET(req) {
   }
 
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
-  const sheets = listLiveSheets().filter((s) => isAdmin || user.thematic === s.thematic);
+  const sheets = listLiveSheets()
+    .filter((s) => isAdmin || user.thematic === s.thematic)
+    .map(({ path, ...rest }) => rest);
   return NextResponse.json({ sheets });
 }
 
@@ -39,6 +41,9 @@ export async function POST(req) {
     if (err.code === 'NEEDS_DISEASE_ID') {
       return NextResponse.json({ error: err.message, needs_disease_id: true }, { status: 400 });
     }
+    if (err.code === 'NEEDS_SYMPTOM_ID') {
+      return NextResponse.json({ error: err.message, needs_symptom_id: true }, { status: 400 });
+    }
     throw err;
   }
 
@@ -57,25 +62,24 @@ export async function POST(req) {
       timeout,
       altUrls: job.altUrls
     });
+    const PREVIEW_CAP = 20;
     const records = rows.map(sanitiseRow);
+    const truncated = Boolean(job.heavy) && records.length > PREVIEW_CAP;
     return NextResponse.json({
       sheet: job.sheet,
-      endpoint: job.endpoint,
-      body: job.body,
       heavy: job.heavy,
       count: records.length,
-      records
+      truncated,
+      records: truncated ? records.slice(0, PREVIEW_CAP) : records
     });
   } catch (err) {
     const message = err.response?.data
       ? String(err.response.data).substring(0, 300)
-      : (err.message || 'PHP request failed');
+      : (err.message || 'Request failed');
     console.error('[php/query]', sheet, message);
     return NextResponse.json({
-      error: message,
-      sheet: job.sheet,
-      endpoint: job.endpoint,
-      body: job.body
+      error: 'Unable to load records.',
+      sheet: job.sheet
     }, { status: 502 });
   }
 }

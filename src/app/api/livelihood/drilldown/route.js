@@ -1,7 +1,82 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
-import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
+import { getFiltersFromRequest, buildFilters, whereStr, validDateClause } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
+import { placementWindowCte, mixWorkingSql } from '@/lib/livelihoodAnalytics.js';
+import { queryMixRows } from '@/lib/mixDrilldown.js';
+import { eqFold, eqSoft } from '@/lib/labelNorm.js';
+import { addColFilters } from '@/lib/drilldownFilters.js';
+import {
+  SKILL_PERSON_GEO_JOIN,
+  SKILL_BARE_GEO_JOIN,
+  SKILL_DISTRICT,
+  SKILL_STATE,
+  SKILL_DISTRICT_BARE,
+  SKILL_STATE_BARE
+} from '@/lib/geoLookups.js';
+
+const F_PERSON_SP = {
+  person_id: 'sp.person_id',
+  person_name: 'sp.person_name',
+  gender: 'sp.gender',
+  mobile_number: 'sp.mobile_number',
+  trade: 'COALESCE(ts.stream_name, sp.training_stream_id)',
+  district: SKILL_DISTRICT,
+  state: SKILL_STATE,
+  date_of_completion_of_training: 'sp.date_of_completion_of_training',
+  created_at: 'sp.created_at'
+};
+const F_MONITOR = {
+  ...F_PERSON_SP,
+  work_status: 'sm.work_status',
+  current_work: 'sm.current_work',
+  date_of_monitor: 'sm.date_of_monitor',
+  monthly_income: 'sm.monthly_income',
+  trade: 'sp.training_stream_id'
+};
+const F_PERSON = {
+  person_id: 'person_id',
+  person_name: 'person_name',
+  gender: 'gender',
+  mobile_number: 'mobile_number',
+  trade: 'training_stream_id',
+  district: SKILL_DISTRICT_BARE,
+  state: SKILL_STATE_BARE,
+  date_of_completion_of_training: 'date_of_completion_of_training',
+  created_at: 'created_at'
+};
+const F_ENTERPRISE = {
+  member_id: 'es.member_id',
+  member_name: 'es.member_name',
+  phone_number: 'es.phone_number',
+  member_type: 'es.member_type',
+  district_id: 'es.district_id',
+  status: 'es.status',
+  financial_year: 'es.financial_year',
+  profit: 'esm.profit'
+};
+const F_PREPOST = {
+  trade_name: 'trade_name',
+  livelihood: 'livelihood',
+  financial_year: 'financial_year',
+  placement_status: 'placement_status',
+  assessment_type: 'assessment_type'
+};
+const F_MARKET = {
+  agency_name: 'agency_name',
+  market_access_type: 'market_access_type',
+  financial_year: 'financial_year',
+  sales_generated_average: 'sales_generated_average'
+};
+const F_TIME = {
+  person_id: 'c.person_id',
+  person_name: 'sp.person_name',
+  gender: 'sp.gender',
+  mobile_number: 'sp.mobile_number',
+  time_bucket: 'c.time_bucket',
+  first_dt: 'c.first_dt',
+  first_working_dt: 'c.first_working_dt'
+};
 
 export async function GET(req) {
   const user = await getSessionUser(req);
@@ -43,6 +118,7 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_MONITOR);
       const w = whereStr(clauses);
 
       total = await scalar(`
@@ -55,7 +131,7 @@ export async function GET(req) {
       rows = await fetchall(`
         SELECT
           sm.person_id, sp.person_name, sp.gender, sp.mobile_number,
-          sm.work_status, sm.current_work, sm.monthly_income,
+          sm.work_status, sm.current_work,
           sm.date_of_monitor
         FROM skilltracking_monitor sm
         LEFT JOIN skilltracking_persons sp ON sp.person_id = sm.person_id
@@ -71,11 +147,40 @@ export async function GET(req) {
         { key: "mobile_number",   label: "Mobile" },
         { key: "work_status",     label: "Work Status" },
         { key: "current_work",    label: "Current Work" },
-        { key: "monthly_income",  label: "Monthly Income (₹)" },
         { key: "date_of_monitor", label: "Monitored On" },
       ];
 
     } else if (drillType === 'income_range') {
+      const post = `CASE WHEN btrim(COALESCE(m.post_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.post_income::text)::numeric END`;
+      let band = `${post} IS NOT NULL AND ${post} <= 5000`;
+      if (value.includes('5K–10K') || value.includes('5001')) {
+        band = `${post} BETWEEN 5001 AND 10000`;
+      } else if (value.includes('10K') || value.includes('10001')) {
+        band = `${post} > 10000`;
+      }
+      const payload = await queryMixRows({
+        searchParams,
+        year: filters.academic_year || filters.financial_year,
+        q,
+        page,
+        perPage,
+        extraClauses: [`m.program_id::text = '11'`, mixWorkingSql(), band],
+        qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+          COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+          m.year, m.pre_income, m.post_income, m.placement_status`,
+        columns: [
+          { key: 'course_name', label: 'Course' },
+          { key: 'location', label: 'Location' },
+          { key: 'year', label: 'Year' },
+          { key: 'pre_income', label: 'Pre income' },
+          { key: 'post_income', label: 'Post income' },
+          { key: 'placement_status', label: 'Placement' }
+        ]
+      });
+      return NextResponse.json(payload);
+
+    } else if (drillType === 'income_range_legacy') {
       const { clauses, params } = buildFilters(filters, {
         state_col: 'sm.state_id',
         district_col: 'sm.district_id',
@@ -96,6 +201,7 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_MONITOR);
       const w = whereStr(clauses);
 
       total = await scalar(`
@@ -139,11 +245,13 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_PERSON_SP);
       const w = whereStr(clauses);
 
       const baseJoin = `
         FROM skilltracking_persons sp
         LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = sp.training_stream_id
+        ${SKILL_PERSON_GEO_JOIN}
         ${w}
       `;
 
@@ -153,7 +261,7 @@ export async function GET(req) {
         SELECT
           sp.person_id, sp.person_name, sp.gender, sp.mobile_number,
           COALESCE(ts.stream_name, sp.training_stream_id, '—') AS trade,
-          sp.date_of_completion_of_training, sp.state_id, sp.district_id
+          sp.date_of_completion_of_training, ${SKILL_STATE} AS state, ${SKILL_DISTRICT} AS district
         ${baseJoin}
         ORDER BY sp.created_at DESC
         LIMIT :lim OFFSET :off
@@ -166,10 +274,34 @@ export async function GET(req) {
         { key: "mobile_number", label: "Mobile" },
         { key: "trade",         label: "Trade" },
         { key: "date_of_completion_of_training", label: "Completed On" },
-        { key: "district_id",   label: "District" },
+        { key: "state",         label: "State" },
+        { key: "district",      label: "District" },
       ];
 
     } else if (drillType === 'placement_year') {
+      const payload = await queryMixRows({
+        searchParams,
+        year: value || filters.academic_year || filters.financial_year,
+        q,
+        page,
+        perPage,
+        extraClauses: [`m.program_id::text = '11'`, mixWorkingSql()],
+        qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+          COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+          m.year, m.pre_income, m.post_income, m.placement_status`,
+        columns: [
+          { key: 'course_name', label: 'Course' },
+          { key: 'location', label: 'Location' },
+          { key: 'year', label: 'Year' },
+          { key: 'pre_income', label: 'Pre income' },
+          { key: 'post_income', label: 'Post income' },
+          { key: 'placement_status', label: 'Placement' }
+        ]
+      });
+      return NextResponse.json(payload);
+
+    } else if (drillType === 'placement_year_legacy') {
       const { clauses, params } = buildFilters(filters, {
         state_col: 'sm.state_id',
         district_col: 'sm.district_id',
@@ -183,6 +315,7 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_MONITOR);
       const w = whereStr(clauses);
 
       total = await scalar(`
@@ -227,11 +360,13 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_PERSON_SP);
       const w = whereStr(clauses);
 
       const baseJoin = `
         FROM skilltracking_persons sp
         LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = sp.training_stream_id
+        ${SKILL_PERSON_GEO_JOIN}
         ${w}
       `;
 
@@ -241,7 +376,7 @@ export async function GET(req) {
         SELECT
           sp.person_id, sp.person_name, sp.gender, sp.mobile_number,
           COALESCE(ts.stream_name, sp.training_stream_id, '—') AS trade,
-          sp.date_of_completion_of_training, sp.state_id, sp.district_id
+          sp.date_of_completion_of_training, ${SKILL_STATE} AS state, ${SKILL_DISTRICT} AS district
         ${baseJoin}
         ORDER BY sp.created_at DESC
         LIMIT :lim OFFSET :off
@@ -254,7 +389,8 @@ export async function GET(req) {
         { key: "mobile_number", label: "Mobile" },
         { key: "trade",         label: "Trade" },
         { key: "date_of_completion_of_training", label: "Completed On" },
-        { key: "district_id",   label: "District" },
+        { key: "state",         label: "State" },
+        { key: "district",      label: "District" },
       ];
 
     } else if (drillType === 'age') {
@@ -282,11 +418,13 @@ export async function GET(req) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_PERSON_SP);
       const w = whereStr(clauses);
 
       const baseJoin = `
         FROM skilltracking_persons sp
         LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = sp.training_stream_id
+        ${SKILL_PERSON_GEO_JOIN}
         ${w}
       `;
 
@@ -296,7 +434,7 @@ export async function GET(req) {
         SELECT
           sp.person_id, sp.person_name, sp.gender, sp.mobile_number,
           COALESCE(ts.stream_name, sp.training_stream_id, '—') AS trade,
-          sp.date_of_completion_of_training, sp.state_id, sp.district_id,
+          sp.date_of_completion_of_training, ${SKILL_STATE} AS state, ${SKILL_DISTRICT} AS district,
           ${ageExpr} AS age
         ${baseJoin}
         ORDER BY sp.created_at DESC
@@ -311,7 +449,8 @@ export async function GET(req) {
         { key: "mobile_number", label: "Mobile" },
         { key: "trade",         label: "Trade" },
         { key: "date_of_completion_of_training", label: "Completed On" },
-        { key: "district_id",   label: "District" },
+        { key: "state",         label: "State" },
+        { key: "district",      label: "District" },
       ];
 
     } else if (drillType === 'enterprise_total') {
@@ -324,6 +463,7 @@ export async function GET(req) {
         clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_ENTERPRISE);
       const w = whereStr(clauses);
 
       total = await scalar(`SELECT COUNT(*)::integer FROM enterprise_support es ${w}`, params);
@@ -362,6 +502,7 @@ export async function GET(req) {
         clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_ENTERPRISE);
       const w = whereStr(clauses);
 
       total = await scalar(`SELECT COUNT(*)::integer FROM enterprise_support es ${w}`, params);
@@ -396,6 +537,7 @@ export async function GET(req) {
         clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_ENTERPRISE);
       const w = whereStr(clauses);
 
       const baseQuery = `
@@ -439,6 +581,7 @@ export async function GET(req) {
         clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_ENTERPRISE);
       const w = whereStr(clauses);
 
       const baseQuery = `
@@ -481,6 +624,7 @@ export async function GET(req) {
         clauses.push("(trade_name ILIKE :q OR livelihood ILIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_PREPOST);
       const w = whereStr(clauses);
 
       total = await scalar(`SELECT COUNT(*)::integer FROM skilltracking_pre_post_master ${w}`, params);
@@ -517,6 +661,7 @@ export async function GET(req) {
         clauses.push("(agency_name ILIKE :q OR market_access_type ILIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_MARKET);
       const w = whereStr(clauses);
 
       total = await scalar(`SELECT COUNT(*)::integer FROM enterprise_market_access ${w}`, params);
@@ -540,28 +685,263 @@ export async function GET(req) {
         { key: "status",                  label: "Status" }
       ];
 
-    } else {
-      // Default: persons list
+    } else if (drillType === 'geo') {
+      const grain = searchParams.get('grain') || 'state';
+      const geoId = searchParams.get('geo_id') || value;
+      const scoped = {
+        ...filters,
+        ...(grain === 'district'
+          ? { district_id: geoId }
+          : { state_id: geoId, district_id: null })
+      };
+      const { clauses, params } = buildFilters(scoped, {
+        state_col: 'sp.state_id',
+        district_col: 'sp.district_id',
+        date_col: 'sp.created_at',
+        module: 'livelihood'
+      });
+      if (q) {
+        clauses.push('(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)');
+        params.q = `%${q}%`;
+      }
+      addColFilters(searchParams, clauses, params, F_PERSON_SP);
+      const w = whereStr(clauses);
+      total = await scalar(`SELECT COUNT(*)::integer FROM skilltracking_persons sp ${SKILL_PERSON_GEO_JOIN} ${w}`, params);
+      rows = await fetchall(`
+        SELECT
+          sp.person_id, sp.person_name, sp.gender, sp.mobile_number,
+          COALESCE(ts.stream_name, sp.training_stream_id, '—') AS trade,
+          sp.date_of_completion_of_training,
+          ${SKILL_STATE} AS state, ${SKILL_DISTRICT} AS district
+        FROM skilltracking_persons sp
+        LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = sp.training_stream_id
+        ${SKILL_PERSON_GEO_JOIN}
+        ${w}
+        ORDER BY sp.created_at DESC
+        LIMIT :lim OFFSET :off
+      `, { ...params, lim: perPage, off: offset });
+      columns = [
+        { key: 'person_id', label: 'Person ID' },
+        { key: 'person_name', label: 'Name' },
+        { key: 'gender', label: 'Gender' },
+        { key: 'mobile_number', label: 'Mobile' },
+        { key: 'trade', label: 'Trade' },
+        { key: 'state', label: 'State' },
+        { key: 'district', label: 'District' }
+      ];
+
+    } else if (drillType === 'funnel') {
+      if (value === 'roster') {
+        const { clauses, params } = buildFilters(filters, {
+          state_col: 'skilltracking_persons.state_id',
+          district_col: 'skilltracking_persons.district_id',
+          date_col: 'skilltracking_persons.created_at',
+          module: 'livelihood'
+        });
+        if (q) {
+          clauses.push('(person_name ILIKE :q OR mobile_number ILIKE :q OR person_id::text LIKE :q)');
+          params.q = `%${q}%`;
+        }
+        addColFilters(searchParams, clauses, params, F_PERSON);
+        const w = whereStr(clauses);
+        total = await scalar(`SELECT COUNT(*)::integer FROM skilltracking_persons ${SKILL_BARE_GEO_JOIN} ${w}`, params);
+        rows = await fetchall(`
+          SELECT person_id, person_name, gender, mobile_number,
+                 COALESCE(ts.stream_name, training_stream_id, '—') AS trade,
+                 date_of_completion_of_training,
+                 ${SKILL_STATE_BARE} AS state, ${SKILL_DISTRICT_BARE} AS district
+          FROM skilltracking_persons
+          LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = skilltracking_persons.training_stream_id
+          ${SKILL_BARE_GEO_JOIN}
+          ${w}
+          ORDER BY created_at DESC
+          LIMIT :lim OFFSET :off
+        `, { ...params, lim: perPage, off: offset });
+        columns = [
+          { key: 'person_id', label: 'Person ID' },
+          { key: 'person_name', label: 'Name' },
+          { key: 'gender', label: 'Gender' },
+          { key: 'mobile_number', label: 'Mobile' },
+          { key: 'trade', label: 'Trade' },
+          { key: 'state', label: 'State' },
+          { key: 'district', label: 'District' }
+        ];
+      } else if (value === 'earning') {
+        const payload = await queryMixRows({
+        searchParams,
+          year: filters.academic_year || filters.financial_year,
+          q,
+          page,
+          perPage,
+          extraClauses: [
+            `m.program_id::text = '11'`,
+            `CASE WHEN btrim(COALESCE(m.post_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.post_income::text)::numeric END > 0`
+          ],
+          qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+            COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            m.year, m.pre_income, m.post_income, m.placement_status`,
+          columns: [
+            { key: 'course_name', label: 'Course' },
+            { key: 'location', label: 'Location' },
+            { key: 'year', label: 'Year' },
+            { key: 'pre_income', label: 'Pre income' },
+            { key: 'post_income', label: 'Post income' },
+            { key: 'placement_status', label: 'Placement' }
+          ]
+        });
+        return NextResponse.json(payload);
+      } else {
+        const { clauses, params } = buildFilters(filters, {
+          state_col: 'sm.state_id',
+          district_col: 'sm.district_id',
+          date_col: 'sm.date_of_monitor',
+          module: 'livelihood'
+        });
+        if (value === 'working') {
+          clauses.push("sm.work_status = 'Working'");
+        }
+        if (q) {
+          clauses.push('(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)');
+          params.q = `%${q}%`;
+        }
+        addColFilters(searchParams, clauses, params, F_MONITOR);
+        const w = whereStr(clauses);
+        total = await scalar(`
+          SELECT COUNT(DISTINCT sm.person_id)::integer
+          FROM skilltracking_monitor sm
+          LEFT JOIN skilltracking_persons sp ON sp.person_id = sm.person_id
+          ${w}
+        `, params);
+        rows = await fetchall(`
+          SELECT DISTINCT ON (sm.person_id)
+            sm.person_id, sp.person_name, sp.gender, sp.mobile_number,
+            sm.work_status, sm.date_of_monitor
+          FROM skilltracking_monitor sm
+          LEFT JOIN skilltracking_persons sp ON sp.person_id = sm.person_id
+          ${w}
+          ORDER BY sm.person_id, sm.date_of_monitor DESC
+          LIMIT :lim OFFSET :off
+        `, { ...params, lim: perPage, off: offset });
+        columns = [
+          { key: 'person_id', label: 'Person ID' },
+          { key: 'person_name', label: 'Name' },
+          { key: 'gender', label: 'Gender' },
+          { key: 'work_status', label: 'Work Status' },
+          { key: 'date_of_monitor', label: 'Monitored On' }
+        ];
+      }
+
+    } else if (drillType === 'income_delta') {
+      const pre = `CASE WHEN btrim(COALESCE(m.pre_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.pre_income::text)::numeric END`;
+      const post = `CASE WHEN btrim(COALESCE(m.post_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.post_income::text)::numeric END`;
+      const bucket = `CASE
+        WHEN ${pre} IS NULL OR ${post} IS NULL THEN 'No income pair'
+        WHEN ${post} - ${pre} < 0 THEN 'Income fell'
+        WHEN ${post} - ${pre} = 0 THEN 'No change'
+        WHEN ${post} - ${pre} <= 2000 THEN '+₹1–2,000'
+        WHEN ${post} - ${pre} <= 5000 THEN '+₹2,001–5,000'
+        ELSE '+₹5,000+'
+      END`;
+      const payload = await queryMixRows({
+        searchParams,
+        year: filters.academic_year || filters.financial_year,
+        q,
+        page,
+        perPage,
+        extraClauses: [`m.program_id::text = '11'`, value ? `${bucket} = :drill_value` : 'TRUE'],
+        extraParams: value ? { drill_value: value } : {},
+        qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+          COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+          m.year, m.pre_income, m.post_income`,
+        columns: [
+          { key: 'course_name', label: 'Course' },
+          { key: 'location', label: 'Location' },
+          { key: 'year', label: 'Year' },
+          { key: 'pre_income', label: 'Pre income' },
+          { key: 'post_income', label: 'Post income' }
+        ]
+      });
+      return NextResponse.json(payload);
+
+    } else if (drillType === 'time_to_placement') {
       const { clauses, params } = buildFilters(filters, {
         state_col: 'state_id',
         district_col: 'district_id',
-        trade_col: 'training_stream_id',
-        date_col: 'created_at'
+        date_col: 'date_of_monitor',
+        module: 'livelihood'
+      });
+      clauses.push(validDateClause('date_of_monitor'));
+      clauses.push(`date_of_monitor ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'`);
+      const cte = placementWindowCte(whereStr(clauses));
+      const bucketCol = drillType === 'time_to_placement' ? 'time_bucket' : 'delta_bucket';
+      const bucketFilter = value ? `WHERE ${bucketCol} = :drill_value` : '';
+      if (value) params.drill_value = value;
+      const nameFilter = q
+        ? `${bucketFilter ? 'AND' : 'WHERE'} (sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)`
+        : '';
+      if (q) params.q = `%${q}%`;
+      const timeClauses = [];
+      addColFilters(searchParams, timeClauses, params, F_TIME);
+      const timeFilter = timeClauses.length
+        ? `${bucketFilter || nameFilter ? 'AND' : 'WHERE'} ${timeClauses.join(' AND ')}`
+        : '';
+
+      total = await scalar(`
+        ${cte}
+        SELECT COUNT(*)::integer
+        FROM classified c
+        LEFT JOIN skilltracking_persons sp ON sp.person_id = c.person_id
+        ${bucketFilter} ${nameFilter} ${timeFilter}
+      `, params);
+      rows = await fetchall(`
+        ${cte}
+        SELECT
+          c.person_id, sp.person_name, sp.gender, sp.mobile_number,
+          c.time_bucket, c.first_dt, c.first_working_dt
+        FROM classified c
+        LEFT JOIN skilltracking_persons sp ON sp.person_id = c.person_id
+        ${bucketFilter} ${nameFilter} ${timeFilter}
+        ORDER BY c.person_id
+        LIMIT :lim OFFSET :off
+      `, { ...params, lim: perPage, off: offset });
+      columns = [
+        { key: 'person_id', label: 'Person ID' },
+        { key: 'person_name', label: 'Name' },
+        { key: 'gender', label: 'Gender' },
+        { key: 'time_bucket', label: 'Time to placement' },
+        { key: 'first_dt', label: 'First monitor' },
+        { key: 'first_working_dt', label: 'First working' }
+      ];
+
+    } else if (!String(drillType).startsWith('mix_')) {
+      // Default: persons list
+      const { clauses, params } = buildFilters(filters, {
+        state_col: 'skilltracking_persons.state_id',
+        district_col: 'skilltracking_persons.district_id',
+        trade_col: 'skilltracking_persons.training_stream_id',
+        date_col: 'skilltracking_persons.created_at'
       });
       if (q) {
         clauses.push("(person_name ILIKE :q OR mobile_number ILIKE :q OR person_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
+      addColFilters(searchParams, clauses, params, F_PERSON);
       const w = whereStr(clauses);
 
-      total = await scalar(`SELECT COUNT(*)::integer FROM skilltracking_persons ${w}`, params);
+      total = await scalar(`SELECT COUNT(*)::integer FROM skilltracking_persons ${SKILL_BARE_GEO_JOIN} ${w}`, params);
 
       rows = await fetchall(`
         SELECT
           person_id, person_name, gender, mobile_number,
-          training_stream_id AS trade, date_of_completion_of_training,
-          state_id, district_id, created_at
+          COALESCE(ts.stream_name, training_stream_id, '—') AS trade,
+          date_of_completion_of_training,
+          ${SKILL_STATE_BARE} AS state, ${SKILL_DISTRICT_BARE} AS district,
+          created_at
         FROM skilltracking_persons
+        LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = skilltracking_persons.training_stream_id
+        ${SKILL_BARE_GEO_JOIN}
         ${w}
         ORDER BY created_at DESC
         LIMIT :lim OFFSET :off
@@ -572,10 +952,134 @@ export async function GET(req) {
         { key: "person_name",   label: "Name" },
         { key: "gender",        label: "Gender" },
         { key: "mobile_number", label: "Mobile" },
-        { key: "trade",         label: "Trade ID" },
+        { key: "trade",         label: "Trade" },
+        { key: "state",         label: "State" },
+        { key: "district",      label: "District" },
         { key: "date_of_completion_of_training", label: "Completed On" },
-        { key: "district_id",   label: "District" },
       ];
+    }
+
+    if (String(drillType).startsWith('mix_')) {
+      const year = filters.academic_year || filters.financial_year;
+      const location = searchParams.get('location') || '';
+      const mixCommon = { year, q, page, perPage };
+      if (drillType === 'mix_skill_heat') {
+        const payload = await queryMixRows({
+        searchParams,
+          ...mixCommon,
+          extraClauses: [
+            `m.program_id::text = '11'`,
+            eqFold('m.course_name', 'drill_value'),
+            location ? eqFold('m.location', 'location') : 'TRUE'
+          ],
+          extraParams: { drill_value: value, location },
+          qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+            COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            COALESCE(NULLIF(TRIM(m.person_gender), ''), '—') AS gender,
+            COALESCE(NULLIF(TRIM(m.placement_status), ''), '—') AS placement_status,
+            m.year, m.pre_income, m.post_income`,
+          columns: [
+            { key: 'course_name', label: 'Course' },
+            { key: 'location', label: 'Location' },
+            { key: 'gender', label: 'Gender' },
+            { key: 'placement_status', label: 'Placement' },
+            { key: 'year', label: 'Year' },
+            { key: 'pre_income', label: 'Pre income' },
+            { key: 'post_income', label: 'Post income' }
+          ]
+        });
+        return NextResponse.json(payload);
+      }
+      if (drillType === 'mix_course' || drillType === 'mix_skill_gender' || drillType === 'mix_placement' || drillType === 'mix_skill_location') {
+        const field = {
+          mix_course: 'course_name',
+          mix_skill_gender: 'person_gender',
+          mix_placement: 'placement_status',
+          mix_skill_location: 'location'
+        }[drillType];
+        const payload = await queryMixRows({
+        searchParams,
+          ...mixCommon,
+          extraClauses: [
+            `m.program_id::text = '11'`,
+            value
+              ? (field === 'location' || field === 'course_name' ? eqFold(`m.${field}`, 'drill_value') : eqSoft(`m.${field}`, 'drill_value'))
+              : 'TRUE'
+          ],
+          extraParams: { drill_value: value },
+          qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+            COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            COALESCE(NULLIF(TRIM(m.person_gender), ''), '—') AS gender,
+            COALESCE(NULLIF(TRIM(m.placement_status), ''), '—') AS placement_status,
+            m.year, m.pre_income, m.post_income`,
+          columns: [
+            { key: 'course_name', label: 'Course' },
+            { key: 'location', label: 'Location' },
+            { key: 'gender', label: 'Gender' },
+            { key: 'placement_status', label: 'Placement' },
+            { key: 'year', label: 'Year' },
+            { key: 'pre_income', label: 'Pre income' },
+            { key: 'post_income', label: 'Post income' }
+          ]
+        });
+        return NextResponse.json(payload);
+      }
+      if (drillType === 'mix_farmer_location') {
+        const payload = await queryMixRows({
+        searchParams,
+          ...mixCommon,
+          extraClauses: [
+            `m.program_id::text IN ('1','2')`,
+            value ? eqFold('m.location', 'drill_value') : 'TRUE'
+          ],
+          extraParams: { drill_value: value },
+          qSql: '(m.location ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            m.year, COALESCE(m.number_of_farmers, 0)::integer AS farmers`,
+          columns: [
+            { key: 'location', label: 'Location' },
+            { key: 'year', label: 'Year' },
+            { key: 'farmers', label: 'Farmers' }
+          ]
+        });
+        return NextResponse.json(payload);
+      }
+      if (drillType === 'mix_didi_location' || drillType === 'mix_didi_gender' || drillType === 'mix_didi_phase') {
+        const field = {
+          mix_didi_location: 'location',
+          mix_didi_gender: 'person_gender',
+          mix_didi_phase: 'phase'
+        }[drillType];
+        const payload = await queryMixRows({
+        searchParams,
+          ...mixCommon,
+          extraClauses: [
+            `m.program_id::text = '12'`,
+            value
+              ? (field === 'location' ? eqFold(`m.${field}`, 'drill_value') : eqSoft(`m.${field}`, 'drill_value'))
+              : 'TRUE'
+          ],
+          extraParams: { drill_value: value },
+          qSql: '(m.location ILIKE :q OR m.phase ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            COALESCE(NULLIF(TRIM(m.person_gender), ''), '—') AS gender,
+            COALESCE(NULLIF(TRIM(m.phase), ''), '—') AS phase,
+            COALESCE(NULLIF(TRIM(m.training_type), ''), '—') AS training_type,
+            m.year, m.pre_income_individual, m.post_income_individual`,
+          columns: [
+            { key: 'location', label: 'Location' },
+            { key: 'gender', label: 'Gender' },
+            { key: 'phase', label: 'Phase' },
+            { key: 'training_type', label: 'Training' },
+            { key: 'year', label: 'Year' },
+            { key: 'pre_income_individual', label: 'Pre individual' },
+            { key: 'post_income_individual', label: 'Post individual' }
+          ]
+        });
+        return NextResponse.json(payload);
+      }
     }
 
     return NextResponse.json({

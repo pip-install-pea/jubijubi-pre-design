@@ -1,8 +1,25 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     try {
+      const { isDatabaseConfigured, describeDatabase } = await import('./lib/db.js');
+      const db = describeDatabase();
+      if (!isDatabaseConfigured()) {
+        console.log(`[Auto-Sync] Skipped — ${db.reason}`);
+        return;
+      }
+      console.log(`[db] ${db.target} ssl=${db.ssl} passwordSet=${db.passwordSet}`);
+
+      if (process.env.VERCEL || process.env.AUTO_SYNC === 'false' || process.env.AUTO_SYNC === '0') {
+        console.log('[Auto-Sync] Skipped — set AUTO_SYNC=true on a long-running Node host, or run npm run db:sync');
+        return;
+      }
+      if (process.env.AUTO_SYNC !== 'true' && process.env.AUTO_SYNC !== '1') {
+        console.log('[Auto-Sync] Off by default. Set AUTO_SYNC=true to schedule sync in this process.');
+        return;
+      }
+
       const { syncAll } = await import('./lib/syncEngine.js');
-      
+
       const intervalMs = Number(process.env.SYNC_INTERVAL_MS) || 1800000;
       console.log(`[Auto-Sync] Scheduler initialized. Sync interval set to ${intervalMs / 1000 / 60} minutes.`);
 

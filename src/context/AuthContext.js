@@ -30,7 +30,11 @@ export const AuthProvider = ({ children }) => {
       setUser(response.data.user);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error.response?.data?.error || 'Login failed' };
+      const payload = error.response?.data || {};
+      const extra = payload.db?.target
+        ? ` Tried ${payload.db.target}.`
+        : (payload.db?.reason ? ` ${payload.db.reason}` : '');
+      return { success: false, error: `${payload.error || 'Login failed'}${extra}` };
     }
   };
 

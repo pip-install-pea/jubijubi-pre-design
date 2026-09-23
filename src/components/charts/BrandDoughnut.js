@@ -2,10 +2,10 @@
 
 import React from 'react';
 import { Doughnut } from 'react-chartjs-2';
-import { seriesColors, baseOptions, hasValues } from '../../lib/chartTheme';
+import { seriesColors, baseOptions, hasValues, fadeIfUnfocused } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-export default function BrandDoughnut({ labels = [], values = [], title, caption, onSliceClick, colors }) {
+export default function BrandDoughnut({ labels = [], values = [], title, caption, onSliceClick, colors, focus = [] }) {
   const paired = labels.map((label, i) => ({ label, value: Number(values[i] || 0) }))
     .filter((r) => r.value > 0);
   const filteredLabels = paired.map((r) => r.label);
@@ -15,7 +15,10 @@ export default function BrandDoughnut({ labels = [], values = [], title, caption
     return <ChartEmpty caption={caption} />;
   }
 
-  const palette = colors || seriesColors(filteredLabels.length);
+  const palette = colors?.length
+    ? filteredLabels.map((_, i) => colors[i % colors.length])
+    : seriesColors(filteredLabels.length);
+  const painted = palette.map((c, i) => fadeIfUnfocused(c, filteredLabels[i], focus));
 
   return (
     <div className="chart-wrap">
@@ -26,7 +29,7 @@ export default function BrandDoughnut({ labels = [], values = [], title, caption
             labels: filteredLabels,
             datasets: [{
               data: filteredValues,
-              backgroundColor: palette,
+              backgroundColor: painted,
               borderWidth: 0
             }]
           }}
@@ -40,7 +43,7 @@ export default function BrandDoughnut({ labels = [], values = [], title, caption
             onClick: (event, elements) => {
               if (onSliceClick && elements.length > 0) {
                 const idx = elements[0].index;
-                onSliceClick(filteredLabels[idx], filteredValues[idx], idx);
+                onSliceClick(filteredLabels[idx], filteredValues[idx], idx, event);
               }
             }
           }}

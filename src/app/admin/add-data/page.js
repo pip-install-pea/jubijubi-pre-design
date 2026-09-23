@@ -5,6 +5,7 @@ import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../../context/AuthContext';
 import { TABLE_SCHEMAS } from '@/lib/tableSchemas.js';
+import { currentCalendarYear } from '@/lib/phpRegistry.js';
 
 /* ─── Static Table Menu (matches tableSchemas.js on server) ─── */
 const TABLE_MENU = {
@@ -14,7 +15,7 @@ const TABLE_MENU = {
       { key: 'health_profile_patients', label: 'Patient Registration' },
       { key: 'health_profile_doctors', label: 'Doctor Registration' },
       { key: 'health_patient_appointments', label: 'Patient Appointment' },
-      { key: 'health_beneficiary_year', label: 'Year envelope' },
+      { key: 'health_beneficiary_year', label: 'Year totals' },
       { key: 'health_disease_summary', label: 'Disease mix summary' },
       { key: 'health_disease_patients', label: 'Disease patients (sample)' },
     ]
@@ -22,6 +23,7 @@ const TABLE_MENU = {
   livelihood: {
     label: 'Livelihood',
     tables: [
+      { key: 'skilltracking_program', label: 'Programme catalogue' },
       { key: 'skilltracking_batch_list', label: 'Training Batch' },
       { key: 'skilltracking_persons', label: 'Skilling Trainee' },
       { key: 'skilltracking_monitor', label: 'Placement Monitor' },
@@ -34,7 +36,8 @@ const TABLE_MENU = {
     label: 'Education',
     tables: [
       { key: 'education_program', label: 'Programme Session' },
-      { key: 'education_mixprogram', label: 'Mixprogramme schools' },
+      { key: 'education_mixprogram', label: 'Programme sheets' },
+      { key: 'skilltracking_kkp_pre_and_post', label: 'KKP pre/post values' },
       { key: 'education_assessment', label: 'Values Assessment' },
       { key: 'education_muskaan_assessment', label: 'Muskaan Skill Assessment' },
     ]
@@ -155,6 +158,20 @@ const FIELD_CONFIGS = {
     { col: 'financial_year', label: 'Financial Year', type: 'text', placeholder: 'e.g. 2024-25' },
     { col: 'profit', label: 'Annual Profit (₹)', type: 'text' },
   ],
+  skilltracking_program: [
+    { col: 'program_id', label: 'Programme ID', type: 'text', required: true },
+    { col: 'program_name', label: 'Programme name', type: 'text', required: true },
+    { col: 'code', label: 'Code', type: 'text' },
+    { col: 'status', label: 'Status', type: 'text' },
+  ],
+  skilltracking_kkp_pre_and_post: [
+    { col: 'id', label: 'Row ID', type: 'text', required: true },
+    { col: 'financial_year', label: 'Financial year', type: 'text', placeholder: 'e.g. 2025-26' },
+    { col: 'location_name', label: 'Location', type: 'text' },
+    { col: 'value_name', label: 'Value', type: 'text' },
+    { col: 'pre_kkp', label: 'Pre score', type: 'text' },
+    { col: 'post_kkp', label: 'Post score', type: 'text' },
+  ],
   education_program: [
     { col: 'program_id', label: 'Programme ID', type: 'text', required: true },
     { col: 'program_name', label: 'Programme Name', type: 'text', required: true },
@@ -229,10 +246,11 @@ export default function AddDataPage() {
 
   const [liveSheets, setLiveSheets] = useState([]);
   const [liveSheet, setLiveSheet] = useState('');
-  const [liveYear, setLiveYear] = useState(String(new Date().getFullYear()));
+  const [liveYear, setLiveYear] = useState(currentCalendarYear());
   const [liveFrom, setLiveFrom] = useState('');
   const [liveTo, setLiveTo] = useState('');
   const [liveDiseaseId, setLiveDiseaseId] = useState('');
+  const [liveSymptomId, setLiveSymptomId] = useState('');
   const [liveRecords, setLiveRecords] = useState([]);
   const [liveMeta, setLiveMeta] = useState(null);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -311,12 +329,13 @@ export default function AddDataPage() {
       if (liveFrom) payload.from_date = liveFrom;
       if (liveTo) payload.to_date = liveTo;
       if (liveDiseaseId) payload.disease_id = liveDiseaseId;
+      if (liveSymptomId) payload.symptom_id = liveSymptomId;
       const res = await axios.post('/api/php/query', payload);
       setLiveRecords(res.data.records || []);
       setLiveMeta(res.data);
     } catch (err) {
       setLiveRecords([]);
-      setLiveError(err.response?.data?.error || 'Live fetch failed.');
+      setLiveError(err.response?.data?.error || 'Unable to load records.');
     } finally {
       setLiveLoading(false);
     }
@@ -531,23 +550,18 @@ export default function AddDataPage() {
   return (
     <div>
       {/* Header */}
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Add Data</h2>
-        <p className="section-sub">Live jubicare tables, plus manual Postgres insert</p>
-      </div>
-
       <div className="tab-list" style={{ marginBottom: '16px' }}>
         <button
           className={`tab-btn ${mode === 'live' ? 'active' : ''}`}
           onClick={() => setMode('live')}
         >
-          Live from API
+          Browse records
         </button>
         <button
           className={`tab-btn ${mode === 'single' || mode === 'bulk' || mode === 'manage' ? 'active' : ''}`}
           onClick={() => setMode('single')}
         >
-          Manual / Postgres
+          Add records
         </button>
       </div>
 
@@ -555,13 +569,13 @@ export default function AddDataPage() {
         <div className="card" style={{ marginBottom: '24px' }}>
           <div className="card-body">
             <p className="section-sub" style={{ marginBottom: '12px' }}>
-              Reads jubicare directly (JWT stays on this app). Appointments and patients use a short date window — PHP 500s on a full year.
+              Preview programme records. Large tables use a date window.
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '12px' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Sheet</label>
                 <select className="form-control" value={liveSheet} onChange={(e) => { setLiveSheet(e.target.value); setLiveRecords([]); setLiveError(''); }}>
-                  <option value="">— Choose a live sheet —</option>
+                  <option value="">— Choose a table —</option>
                   {['health', 'livelihood', 'education'].map((theme) => (
                     <optgroup key={theme} label={theme}>
                       {liveSheets.filter((s) => s.thematic === theme).map((s) => (
@@ -573,7 +587,7 @@ export default function AddDataPage() {
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Calendar year</label>
-                <input className="form-control" value={liveYear} onChange={(e) => setLiveYear(e.target.value)} placeholder="2025" />
+                <input className="form-control" value={liveYear} onChange={(e) => setLiveYear(e.target.value)} placeholder={currentCalendarYear()} />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">from_date</label>
@@ -589,16 +603,22 @@ export default function AddDataPage() {
                   <input className="form-control" value={liveDiseaseId} onChange={(e) => setLiveDiseaseId(e.target.value)} placeholder="from disease summary" />
                 </div>
               )}
+              {selectedLive?.needsSymptomId && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">symptom_id</label>
+                  <input className="form-control" value={liveSymptomId} onChange={(e) => setLiveSymptomId(e.target.value)} placeholder="from symptom summary" />
+                </div>
+              )}
             </div>
             {selectedLive?.caption && <p className="kpi-caption">{selectedLive.caption}</p>}
             <button className="btn btn-primary" onClick={fetchLiveRecords} disabled={!liveSheet || liveLoading} style={{ marginTop: '12px' }}>
-              {liveLoading ? 'Fetching…' : 'Fetch live rows'}
+              {liveLoading ? 'Loading…' : 'Load records'}
             </button>
             {liveError && <p className="kpi-caption" style={{ color: 'var(--danger)', marginTop: '8px' }}>{liveError}</p>}
             {liveMeta && (
               <p className="kpi-caption" style={{ marginTop: '8px' }}>
-                {liveMeta.endpoint} · {liveMeta.count} rows
-                {liveMeta.body ? ` · ${JSON.stringify(liveMeta.body)}` : ''}
+                {liveMeta.count} rows
+                {liveMeta.truncated ? ` (showing first ${liveRecords.length}; PHP ignores Limit)` : ''}
               </p>
             )}
             {liveRecords.length > 0 && (
@@ -679,7 +699,7 @@ export default function AddDataPage() {
               onClick={() => { setMode('manage'); fetchManualRecords(selectedTable); }}
               id="tab-manage-data"
             >
-              🛠️ Postgres rows (incl. synced)
+              Saved records
             </button>
           </div>
 

@@ -6,6 +6,17 @@ Health calendar year, education academic year, and enterprise `financial_year` a
 
 Health `state_id=1` is Gautam Budh Nagar; livelihood `district_id=1` is Gajraula. Do not reuse health location IDs for livelihood.
 
+## Serving store (Postgres first)
+
+Dashboards read **local Postgres**. Jubicare PHP is ETL: Admin → Sync (or `SYNC_INTERVAL_MS`) writes complete envelopes and tables, then page loads query SQL.
+
+- `health_beneficiary.php` → `health_beneficiary_year` (2016–current)
+- `health_desease.php` / `health_symtoms.php` → `health_disease_summary` / `health_symptom_summary`
+- `skilltracking.php` `table_name=program` → `skilltracking_program` (this is the mixprogram `program_id` catalogue; **not** `education_program.id`)
+- `mixprogram.php` per catalog id × FY → `education_mixprogram`
+
+Do not call PHP on every graph render. A cold DB may write-through one live year, then later loads hit Postgres.
+
 ---
 
 ## 1. Mentorship sessions / hours / expertise

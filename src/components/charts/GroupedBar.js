@@ -2,21 +2,20 @@
 
 import React from 'react';
 import { Bar } from 'react-chartjs-2';
-import { NAVY, SKY, GOLD, LIME, baseOptions, hasValues } from '../../lib/chartTheme';
+import { seriesColors, baseOptions, hasValues, fadeIfUnfocused } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-const SERIES = [NAVY, SKY, GOLD, LIME];
-
-export default function GroupedBar({ labels = [], datasets = [], title, caption, horizontal, onBarClick }) {
+export default function GroupedBar({ labels = [], datasets = [], title, caption, horizontal, onBarClick, focus = [] }) {
   const any = datasets.some((ds) => hasValues(ds.data || []));
   if (!any || !labels.length) {
     return <ChartEmpty caption={caption} />;
   }
 
+  const palette = seriesColors(datasets.length);
   const chartDatasets = datasets.map((ds, i) => ({
     label: ds.label,
     data: ds.data,
-    backgroundColor: ds.color || SERIES[i % SERIES.length],
+    backgroundColor: labels.map((label) => fadeIfUnfocused(ds.color || palette[i], label, focus)),
     borderRadius: 6,
     maxBarThickness: 28
   }));
@@ -34,7 +33,7 @@ export default function GroupedBar({ labels = [], datasets = [], title, caption,
             onClick: (event, elements) => {
               if (onBarClick && elements.length > 0) {
                 const idx = elements[0].index;
-                onBarClick(labels[idx], idx, elements[0].datasetIndex);
+                onBarClick(labels[idx], idx, elements[0].datasetIndex, event);
               }
             }
           }}

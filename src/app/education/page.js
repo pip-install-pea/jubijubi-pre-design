@@ -2,22 +2,35 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import RankingBar from '../../components/charts/RankingBar';
 import GroupedBar from '../../components/charts/GroupedBar';
+import QuadrantScatter from '../../components/charts/QuadrantScatter';
+import EChart, {
+  treemapOption,
+  stackedBarOption,
+  groupedBarOption,
+  sunburstOption,
+  roseOption
+} from '../../components/charts/EChart';
 import DrilldownModal from '../../components/DrilldownModal';
-import { LIME, NAVY, SKY } from '../../lib/chartTheme';
+import YearStrip from '../../components/YearStrip';
+import ChartFocusBar from '../../components/ChartFocusBar';
+import PageRail from '../../components/PageRail';
+import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
+import { financialYearList } from '../../lib/phpRegistry.js';
+import { NAVY, SKY } from '../../lib/chartTheme';
 
 export default function EducationPage() {
   const [data, setData] = useState({
     activities: [],
-    schools: [],
     prePost: { data: [] },
     muskaan: { data: [] },
-    mix: { data: [] }
+    mix: { data: [] },
+    quadrant: null
   });
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
+  const { focus, select, remove, clear } = useChartFocus();
 
   useEffect(() => {
     const handleApply = (e) => setFilters(e.detail || {});
@@ -31,11 +44,11 @@ export default function EducationPage() {
       Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
     ).toString();
     try {
-      const [activities, schools, prePost, muskaan] = await Promise.all([
+      const [activities, prePost, muskaan, quadrant] = await Promise.all([
         axios.get(`/api/education/activities?${query}`),
-        axios.get(`/api/education/schools_comparison?${query}`),
         axios.get(`/api/education/pre_post_values?${query}`),
-        axios.get(`/api/education/muskaan_performance?${query}`)
+        axios.get(`/api/education/muskaan_performance?${query}`),
+        axios.get(`/api/education/quadrant?${query}`)
       ]);
       let mix = { data: { status: 'no_data', data: [] } };
       try {
@@ -45,10 +58,10 @@ export default function EducationPage() {
       }
       setData({
         activities: activities.data,
-        schools: schools.data,
         prePost: prePost.data,
         muskaan: muskaan.data,
-        mix: mix.data
+        mix: mix.data,
+        quadrant: quadrant.data
       });
     } catch (err) {
       console.error('Education data load failed');
@@ -61,7 +74,11 @@ export default function EducationPage() {
     fetchAllData();
   }, [fetchAllData]);
 
-  const handleDrilldown = (type, label, extraParams = {}) => {
+  const handleDrilldown = (type, label, extraParams = {}, event) => {
+    if (type === 'mix_program') {
+      select(label, event);
+      if (event?.shiftKey || event?.metaKey) return;
+    }
     setModal({
       isOpen: true,
       title: `${type.charAt(0).toUpperCase() + type.slice(1)}: ${label}`,
@@ -82,113 +99,337 @@ export default function EducationPage() {
     byProgram[r.program] += r.students || 0;
   });
   const programItems = Object.entries(byProgram).map(([label, value]) => ({ label, value }));
-  const totalStudents = programItems.reduce((s, r) => s + r.value, 0);
+  const rollupStudents = programItems.reduce((s, r) => s + r.value, 0);
+  const mix = data.mix?.status === 'ok' ? data.mix : null;
+  const mixSchool = mix?.school;
+  const mixKpis = mixSchool?.kpis || {};
+  const mixByProgram = mixSchool?.by_program || [];
+  const mixCaste = mixSchool?.caste || [];
+  const mixKkp = mix?.kkp;
+  const mixThemes = mix?.kkp2?.themes || [];
+  const mixActivities = mix?.muskaan_activity?.activities || [];
+  const mixMonths = mix?.muskaan_activity?.months || [];
+  const mixFellows = mix?.fellowship;
+  const mixProgramLocs = mixSchool?.program_locations || [];
+  const mixSunburst = mixSchool?.sunburst || [];
+  const useSchoolSheets = Number(mixKpis.schools) > 0 || mixByProgram.length > 0;
+  const kkpRows = data.prePost?.status !== 'no_data' ? (data.prePost?.data || []) : [];
+  const kkpDelta = kkpRows.length
+    ? kkpRows.reduce((s, r) => s + (Number(r.avg_post) || 0) - (Number(r.avg_pre) || 0), 0) / kkpRows.length
+    : null;
+  const showQuadrant = Array.isArray(data.quadrant?.points) && data.quadrant.points.length > 0;
+  const showMuskaan = data.muskaan?.status !== 'no_data' && data.muskaan?.data?.length > 0;
 
   return (
     <div>
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Education Programme</h2>
-        <p className="section-sub">Students by trimmed programme name. Activity type is not in the live schema.</p>
-      </div>
-
+      <PageRail>
+        <YearStrip
+          label="Academic year"
+          years={financialYearList(6)}
+          value={filters.academic_year || filters.financial_year}
+          onChange={(fy) => patchFilters({ academic_year: fy, financial_year: fy })}
+        />
+        <ChartFocusBar
+          focus={focus}
+          onClear={clear}
+          onRemove={remove}
+          hint="Shift-click a second programme to compare"
+        />
+      </PageRail>
       <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-body">
-            <div className="kpi-value">{totalStudents.toLocaleString('en-IN')}</div>
-            <div className="kpi-label">Students (SUM student_count)</div>
-            <p className="kpi-caption">TRIM(program_name). Not grouped by activity type.</p>
+        {useSchoolSheets ? (
+          <>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{Number(mixKpis.students || 0).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Students</div>
+                <p className="kpi-caption">Max headcount per school, then summed</p>
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{Number(mixKpis.schools || 0).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Schools</div>
+              </div>
+            </div>
+            {mixKpis.girls_pct != null && (
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{mixKpis.girls_pct}%</div>
+                  <div className="kpi-label">Girls share</div>
+                </div>
+              </div>
+            )}
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{mixByProgram.length}</div>
+                <div className="kpi-label">School programmes</div>
+              </div>
+            </div>
+            {Number(mixKpis.teachers) > 0 && (
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{Number(mixKpis.teachers).toLocaleString('en-IN')}</div>
+                  <div className="kpi-label">Teachers reached</div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{rollupStudents.toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Programme rollup</div>
+                <p className="kpi-caption">education_program student_count. School sheets are empty for this filter.</p>
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{programItems.length}</div>
+                <div className="kpi-label">Programmes</div>
+              </div>
+            </div>
+          </>
+        )}
+        {kkpDelta != null && (
+          <>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{kkpDelta > 0 ? '+' : ''}{kkpDelta.toFixed(1)}</div>
+                <div className="kpi-label">Mean KKP gain</div>
+                <p className="kpi-caption">Post − pre, location scores, not students</p>
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{kkpRows.length}</div>
+                <div className="kpi-label">KKP values</div>
+                <p className="kpi-caption">Location-level skilltracking scores</p>
+              </div>
+            </div>
+          </>
+        )}
+        {mixKkp?.total_sessions > 0 && (
+          <div className="kpi-card">
+            <div className="kpi-body">
+              <div className="kpi-value">{Number(mixKkp.total_sessions).toLocaleString('en-IN')}</div>
+              <div className="kpi-label">KKP sessions</div>
+            </div>
           </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-body">
-            <div className="kpi-value">{(data.activities || []).length}</div>
-            <div className="kpi-label">Programme × year rows</div>
-          </div>
-        </div>
+        )}
       </div>
 
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Students by programme · trimmed program_name</h3>
-        </div>
-        <div className="card-body">
-          <RankingBar
-            items={programItems}
-            color={LIME}
-            caption="Trailing spaces in KKP vs KKP are trimmed at sync."
-            onBarClick={(label) => handleDrilldown('activity', label)}
-          />
-        </div>
-      </div>
+      {mix && (
+        <>
+          {(mixKpis.schools > 0 || mixByProgram.length > 0) && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>School programmes</h3>
+              </div>
+              <div className="card-body">
+                <div className="card-row">
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>Students by programme</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={treemapOption(mixByProgram.map((r) => ({ label: r.label, value: r.students })), { name: 'Students' })}
+                        focus={focus}
+                        onPoint={(p) => p.name && handleDrilldown('mix_program', p.name, {}, p.nativeEvent)}
+                      />
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-header"><h3>Male and female by programme</h3></div>
+                    <div className="card-body">
+                      <EChart
+                        option={stackedBarOption(
+                          mixByProgram.map((r) => r.label),
+                          [
+                            { label: 'Male', data: mixByProgram.map((r) => r.male) },
+                            { label: 'Female', data: mixByProgram.map((r) => r.female) }
+                          ]
+                        )}
+                        focus={focus}
+                        onPoint={(p) => p.name && handleDrilldown('mix_program', p.name, {}, p.nativeEvent)}
+                      />
+                    </div>
+                  </div>
+                </div>
+                {mixSunburst.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location to programme</h3>
+                    <EChart
+                      option={sunburstOption(mixSunburst)}
+                      height={380}
+                      focus={focus}
+                      onPoint={(p) => {
+                        if (!p.name) return;
+                        const isProgram = mixByProgram.some((r) => r.label === p.name);
+                        handleDrilldown(isProgram ? 'mix_program' : 'mix_location', p.name, {}, p.nativeEvent);
+                      }}
+                    />
+                  </div>
+                )}
+                {mixProgramLocs.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Top locations in each programme</h3>
+                    <div className="program-loc-grid">
+                      {mixProgramLocs.map((block) => (
+                        <div key={block.program} className="program-loc-card">
+                          <h4 className="chart-inline-title">{block.program}</h4>
+                          <EChart
+                            option={groupedBarOption(
+                              (block.rows || []).map((r) => r.label),
+                              [{ label: 'Students', data: (block.rows || []).map((r) => r.value) }],
+                              { horizontal: true }
+                            )}
+                            height={Math.max(200, (block.rows || []).length * 32)}
+                            onPoint={(p) => {
+                              if (!p.name) return;
+                              handleDrilldown('mix_heat', block.program, { location: p.name });
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {mixCaste.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Caste categories</h3>
+                    <EChart
+                      option={roseOption(mixCaste)}
+                      onPoint={(p) => p.name && handleDrilldown('mix_caste', p.name)}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Schools and students by academic year</h3>
-        </div>
-        <div className="card-body">
-          <GroupedBar
-            labels={(data.schools || []).map(r => `${r.academic_year} / ${r.program}`)}
-            datasets={[
-              { label: 'Schools', data: (data.schools || []).map(r => r.school_count), color: SKY },
-              { label: 'Students', data: (data.schools || []).map(r => r.total_students), color: NAVY }
-            ]}
-            caption="Academic year is derived from created_at when the API does not send one."
-            onBarClick={(label, idx) => {
-              const r = data.schools[idx];
-              if (r) handleDrilldown('school', label, { academic_year: r.academic_year, program_name: r.program });
-            }}
-          />
-        </div>
-      </div>
+          {mixThemes.length > 0 && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>KKP 2.0 themes</h3>
+              </div>
+              <div className="card-body">
+                <EChart
+                  option={treemapOption(mixThemes)}
+                  onPoint={(p) => p.name && handleDrilldown('mix_theme', p.name)}
+                />
+              </div>
+            </div>
+          )}
 
-      {data.mix?.status === 'ok' && data.mix.data?.length > 0 && (
+          {mixActivities.length > 0 && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan activities</h3>
+              </div>
+              <div className="card-body">
+                <EChart
+                  option={treemapOption(mixActivities)}
+                  onPoint={(p) => p.name && handleDrilldown('mix_activity', p.name)}
+                />
+                {mixMonths.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>By month</h3>
+                    <EChart
+                      option={groupedBarOption(
+                        mixMonths.map((r) => r.label),
+                        [{ label: 'Students', data: mixMonths.map((r) => r.value) }]
+                      )}
+                      onPoint={(p) => {
+                        if (!p.name) return;
+                        const row = mixMonths.find((r) => r.label === p.name);
+                        handleDrilldown('mix_month', p.name, {
+                          month: row?.month,
+                          year: row?.year
+                        });
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {mixFellows?.fellows > 0 && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan fellowship</h3>
+              </div>
+              <div className="card-body">
+                <div className="kpi-grid">
+                  <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('mix_fellow', '')}>
+                    <div className="kpi-body">
+                      <div className="kpi-value">{mixFellows.fellows}</div>
+                      <div className="kpi-label">Fellows</div>
+                    </div>
+                  </div>
+                </div>
+                <EChart
+                  option={roseOption(mixFellows.gender || [])}
+                  onPoint={(p) => p.name && handleDrilldown('mix_fellow', p.name)}
+                />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {kkpRows.length > 0 && (
         <div className="card" style={{ marginBottom: '24px' }}>
           <div className="card-header">
-            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Mixprogramme schools</h3>
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>
+              {data.prePost?.source === 'skilltracking_kkp_pre_and_post'
+                ? 'KKP pre/post by value'
+                : 'Values assessment — pre vs post'}
+            </h3>
           </div>
           <div className="card-body">
-            <RankingBar
-              items={data.mix.data.map(r => ({ label: r.school_name, value: r.students_total }))}
-              color={NAVY}
-              caption="Optional mixprogram.php rows. theme_touched is unrelated text, not an activity type."
+            {data.prePost?.source === 'skilltracking_kkp_pre_and_post' && (
+              <p className="chart-caption">
+                Location-level KKP scores from skilltracking kkp_pre_and_post. Not school- or student-level.
+              </p>
+            )}
+            <GroupedBar
+              labels={kkpRows.map(r => r.value)}
+              datasets={[
+                { label: 'Pre score', data: kkpRows.map(r => r.avg_pre), color: SKY },
+                { label: 'Post score', data: kkpRows.map(r => r.avg_post), color: NAVY }
+              ]}
+              onBarClick={(label) => handleDrilldown(
+                data.prePost?.source === 'skilltracking_kkp_pre_and_post' ? 'kkp' : 'assessment',
+                label
+              )}
             />
           </div>
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Values assessment — pre vs post</h3>
-        </div>
-        <div className="card-body">
-          {data.prePost?.status === 'no_data' || !data.prePost?.data?.length ? (
-            <div className="empty-state">
-              <strong>Assessment data not yet available</strong>
-              <p className="chart-caption">{data.prePost?.message || 'education_assessment is not in the live extract.'}</p>
-            </div>
-          ) : (
-            <GroupedBar
-              labels={data.prePost.data.map(r => r.value)}
-              datasets={[
-                { label: 'Pre score', data: data.prePost.data.map(r => r.avg_pre), color: SKY },
-                { label: 'Post score', data: data.prePost.data.map(r => r.avg_post), color: NAVY }
-              ]}
+      {showQuadrant && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>School quadrant — reach vs learning gain</h3>
+          </div>
+          <div className="card-body">
+            <QuadrantScatter
+              payload={data.quadrant}
+              caption="School-level pre/post scores. KKP location averages cannot place schools here."
+              onPointClick={(point) => handleDrilldown('quadrant', point.label || point.key)}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="card">
-        <div className="card-header">
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan — skill level outcomes</h3>
-        </div>
-        <div className="card-body">
-          {data.muskaan?.status === 'no_data' || !data.muskaan?.data?.length ? (
-            <div className="empty-state">
-              <strong>Muskaan assessment data not yet available</strong>
-              <p className="chart-caption">{data.muskaan?.message || 'education_muskaan_assessment is not in the live extract.'}</p>
-            </div>
-          ) : (
+      {showMuskaan && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Muskaan — skill level outcomes</h3>
+          </div>
+          <div className="card-body">
             <div className="table-scroll">
               <table className="data-table">
                 <thead>
@@ -211,9 +452,9 @@ export default function EducationPage() {
                 </tbody>
               </table>
             </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <DrilldownModal
         key={modal.apiUrl + JSON.stringify(modal.params)}

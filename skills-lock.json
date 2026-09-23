@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "data-analyst": {
+      "source": "ailabs-393/ai-labs-claude-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills/data-analyst/SKILL.md",
+      "computedHash": "2cd2d0e1499dc4ce2c9c4dcb8a86fa3a28de61975a5b01b2eaede4119e643b31"
+    },
+    "echarts": {
+      "source": "sentimony/skills",
+      "sourceType": "github",
+      "skillPath": "skills/echarts/SKILL.md",
+      "computedHash": "57ed6dd685d16f053e705499de2ba754a4bdf35f6106a41fafc6718a6511a3ad"
+    },
+    "ui-ux-expert": {
+      "source": "martinholovsky/claude-skills-generator",
+      "sourceType": "github",
+      "skillPath": "skills/ui-ux-expert/SKILL.md",
+      "computedHash": "3f7bf154d20cff5d3355b7172e5b51ea3ff8eb5123febc5e114dad23e93d9e29"
+    }
+  }
+}

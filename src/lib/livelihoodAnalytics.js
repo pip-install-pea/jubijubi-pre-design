@@ -1,7 +1,44 @@
 import { fetchall, scalar } from './db.js';
-import { buildFilters, whereStr, validDateClause } from './analytics.js';
+import { buildFilters, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
+import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 
 const GEO = { module: 'livelihood' };
+
+function moneySql(col) {
+  return `CASE WHEN btrim(COALESCE(${col}::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(${col}::text)::numeric ELSE NULL END`;
+}
+
+const SHEET_INCOME_MIN = 0;
+const SHEET_INCOME_MAX = 200000;
+
+function mixYearClauses(filters) {
+  const year = filters?.academic_year || filters?.financial_year;
+  const params = {};
+  const clauses = [MIX_CANONICAL_ROW];
+  if (year) {
+    clauses.push('m.year = :year');
+    params.year = year;
+  }
+  return { clauses, params };
+}
+
+export function mixWorkingSql() {
+  return `(
+    LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) IN (
+      'working', 'placed', 'employed', 'self employment', 'self employement'
+    )
+    OR LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) LIKE 'working%'
+    OR LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) LIKE 'self employ%'
+  )`;
+}
+
+function mixSkillingWhere(filters, { workingOnly = false } = {}) {
+  const { clauses, params } = mixYearClauses(filters);
+  clauses.push(`m.program_id::text = '11'`);
+  if (workingOnly) clauses.push(mixWorkingSql());
+  return { w: whereStr(clauses), params };
+}
 
 function lf(filters, options) {
   return buildFilters(filters, { ...GEO, ...options });
@@ -110,19 +147,12 @@ export async function getSkillingBeneficiaries(filters) {
   return {
     roster_count: total,
     total_trained: total,
-    status_breakdown: statusBreakdown,
-    caption: 'Roster count of skilltracking_persons. Do not read as “trained” until L1 is defined. Work status is the monitored subset only.'
+    status_breakdown: statusBreakdown
   };
 }
 
 export async function getIncomeDistribution(filters) {
-  const { clauses, params } = lf(filters, {
-    state_col: 'state_id',
-    district_col: 'district_id',
-    date_col: 'date_of_monitor'
-  });
-  const w = whereStr(clauses);
-  return await _incomeBuckets(w, params, false);
+  return getSheetIncomeBuckets(filters);
 }
 
 export async function getSkillingDemographics(filters) {
@@ -134,18 +164,12 @@ export async function getSkillingDemographics(filters) {
   });
   const w = whereStr(clauses);
 
-  const joinClause = `
-    FROM skilltracking_persons sp
-    LEFT JOIN skilltracking_monitor sm ON sm.person_id = sp.person_id
-    ${w}
-  `;
-
   const genderRows = await fetchall(
     `SELECT
        COALESCE(sp.gender, 'Unknown') AS gender,
-       COUNT(*)::integer              AS cnt,
-       COALESCE(AVG(CASE WHEN sm.monthly_income ~ '^[0-9]+$' THEN sm.monthly_income::integer ELSE null END), 0) AS avg_income
-     ${joinClause}
+       COUNT(*)::integer              AS cnt
+     FROM skilltracking_persons sp
+     ${w}
      GROUP BY sp.gender
      ORDER BY cnt DESC`,
     params
@@ -153,8 +177,7 @@ export async function getSkillingDemographics(filters) {
 
   const genderBreakdown = genderRows.map(r => ({
     gender: r.gender,
-    count: r.cnt,
-    avg_income: parseFloat(parseFloat(r.avg_income).toFixed(2))
+    count: r.cnt
   }));
 
   const ageQuery = `
@@ -258,40 +281,79 @@ export async function getPlacementStatus(filters) {
 }
 
 export async function getPlacementIncomeRange(filters) {
-  const { clauses, params } = lf(filters, {
-    state_col: 'state_id',
-    district_col: 'district_id',
-    date_col: 'date_of_monitor'
-  });
-  const w = whereStr(clauses);
-  return await _incomeBuckets(w, params, true);
+  return getSheetIncomeBuckets(filters);
 }
 
-export async function getYoYIncome(filters) {
-  const { clauses, params } = lf(filters, {
-    state_col: 'state_id',
-    district_col: 'district_id'
-  });
-  clauses.push(validDateClause('date_of_monitor'));
-  const w = whereStr(clauses);
+async function getSheetIncomeBuckets(filters) {
+  const empty = { '0_5000': 0, '5001_10000': 0, '10001_plus': 0, source: 'education_mixprogram' };
+  try {
+    const { w, params } = mixSkillingWhere(filters, { workingOnly: true });
+    const post = moneySql('m.post_income');
+    const rows = await fetchall(
+      `SELECT
+         SUM(CASE WHEN ${post} IS NOT NULL AND ${post} <= 5000 THEN 1 ELSE 0 END)::integer AS "0_5000",
+         SUM(CASE WHEN ${post} BETWEEN 5001 AND 10000 THEN 1 ELSE 0 END)::integer AS "5001_10000",
+         SUM(CASE WHEN ${post} > 10000 THEN 1 ELSE 0 END)::integer AS "10001_plus"
+       FROM education_mixprogram m
+       ${w}`,
+      params
+    );
+    const r = rows[0] || {};
+    return {
+      '0_5000': Number(r['0_5000']) || 0,
+      '5001_10000': Number(r['5001_10000']) || 0,
+      '10001_plus': Number(r['10001_plus']) || 0,
+      source: 'education_mixprogram'
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] sheet income buckets skipped:', err.message);
+    return empty;
+  }
+}
 
-  const rows = await fetchall(
-    `SELECT
-       SUBSTR(date_of_monitor::text, 1, 4)                     AS yr,
-       COALESCE(AVG(CASE WHEN monthly_income ~ '^[0-9]+$' THEN monthly_income::integer ELSE null END), 0)  AS avg_income,
-       COUNT(*)::integer                                       AS count
-     FROM skilltracking_monitor
-     ${w}
-     GROUP BY SUBSTR(date_of_monitor::text, 1, 4)
-     ORDER BY yr`,
-    params
-  );
-
-  return rows.map(r => ({
-    year: r.yr,
-    avg_income: parseFloat(parseFloat(r.avg_income).toFixed(2)),
-    count: r.count
-  }));
+export async function getYoYIncome() {
+  const empty = [];
+  try {
+    const { w, params } = mixSkillingWhere({}, { workingOnly: true });
+    const post = moneySql('m.post_income');
+    const rows = await fetchall(
+      `SELECT
+         COALESCE(NULLIF(TRIM(m.year), ''), 'Unknown') AS yr,
+         COUNT(*)::integer AS working_rows,
+         COUNT(${post})::integer AS with_income,
+         COUNT(*) FILTER (
+           WHERE ${post} IS NOT NULL
+             AND (${post} < ${SHEET_INCOME_MIN} OR ${post} > ${SHEET_INCOME_MAX})
+         )::integer AS outliers,
+         COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (
+           ORDER BY CASE
+             WHEN ${post} BETWEEN ${SHEET_INCOME_MIN} AND ${SHEET_INCOME_MAX}
+             THEN ${post}
+           END
+         ), 0) AS median_income,
+         COALESCE(AVG(CASE
+           WHEN ${post} BETWEEN ${SHEET_INCOME_MIN} AND ${SHEET_INCOME_MAX}
+           THEN ${post}
+         END), 0) AS avg_income
+       FROM education_mixprogram m
+       ${w}
+       GROUP BY 1
+       ORDER BY yr`,
+      params
+    );
+    return rows.map((r) => ({
+      year: r.yr,
+      median_income: parseFloat(Number(r.median_income || 0).toFixed(0)),
+      avg_income: parseFloat(Number(r.avg_income || 0).toFixed(0)),
+      count: Number(r.with_income) || 0,
+      working_rows: Number(r.working_rows) || 0,
+      outliers: Number(r.outliers) || 0,
+      source: 'education_mixprogram'
+    }));
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] sheet income by year skipped:', err.message);
+    return empty;
+  }
 }
 
 export async function getMentorshipStats(filters) {
@@ -402,7 +464,6 @@ export async function getMarketAccessStats(filters) {
     total_sales_generated,
     avg_sales_generated,
     sales_is_parsed_estimate: true,
-    sales_caption: 'Parsed estimate from sales_generated_average text (e.g. “1 LAKH +”), not an audited total.',
     sales_generated_average_breakdown,
     market_access_type_breakdown,
     top_agencies,
@@ -481,4 +542,650 @@ export async function getPrePostStats(filters) {
   `;
   const rows = await fetchall(query, params);
   return rows;
+}
+
+export async function getLivelihoodGeoBenchmarks(filters) {
+  const grain = filters?.state_id ? 'district' : 'state';
+  const empty = { grain, unit: 'people', rows: [], state_average: 0, programme_average: 0, programme_n: 0, state_n: 0 };
+  const peerFilters = grain === 'district' ? stripDistrict(filters) : stripGeo(filters);
+  const programmeFilters = stripGeo(filters);
+  const opts = {
+    date_col: 'sp.created_at',
+    state_col: 'sp.state_id',
+    district_col: 'sp.district_id',
+    ...GEO
+  };
+  const joinSelect = grain === 'district'
+    ? `COALESCE(NULLIF(TRIM(d.district_name), ''), sp.district_id::text, 'Unknown') AS label, sp.district_id::text AS id`
+    : `COALESCE(NULLIF(TRIM(s.state_name), ''), sp.state_id::text, 'Unknown') AS label, sp.state_id::text AS id`;
+  const joinSql = grain === 'district'
+    ? `LEFT JOIN skilltracking_district d ON d.district_id::text = sp.district_id::text`
+    : `LEFT JOIN skilltracking_state s ON s.state_id::text = sp.state_id::text`;
+  const groupSql = grain === 'district' ? `GROUP BY d.district_name, sp.district_id` : `GROUP BY s.state_name, sp.state_id`;
+
+  const run = async (f, limit) => {
+    const { clauses, params } = lf(f, opts);
+    const lim = limit ? `LIMIT ${Number(limit)}` : '';
+    return fetchall(
+      `SELECT ${joinSelect}, COUNT(*)::integer AS value
+       FROM skilltracking_persons sp
+       ${joinSql}
+       ${whereStr(clauses)}
+       ${groupSql}
+       ORDER BY value DESC
+       ${lim}`,
+      params
+    );
+  };
+
+  try {
+    const [peerRows, programmeRows] = await Promise.all([run(peerFilters), run(programmeFilters)]);
+    const stateAverage = grain === 'district' ? mean(peerRows.map((r) => r.value)) : 0;
+    const programmeAverage = mean(programmeRows.map((r) => r.value));
+    const display = (grain === 'district' ? peerRows : programmeRows).slice(0, 12);
+    return {
+      grain,
+      unit: 'people',
+      rows: withPeerAverages(display, stateAverage, programmeAverage),
+      state_average: Number(stateAverage.toFixed(1)),
+      programme_average: Number(programmeAverage.toFixed(1)),
+      programme_n: programmeRows.length,
+      state_n: grain === 'district' ? peerRows.length : 0
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] geo benchmarks skipped:', err.message);
+    return empty;
+  }
+}
+
+export async function getPlacementFunnel(filters) {
+  const { clauses, params } = lf(filters, {
+    state_col: 'state_id',
+    district_col: 'district_id',
+    date_col: 'created_at'
+  });
+  const w = whereStr(clauses);
+  const { clauses: mClauses, params: mParams } = lf(filters, {
+    state_col: 'state_id',
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
+  });
+  const mw = whereStr(mClauses);
+
+  try {
+    const roster = await scalar(`SELECT COALESCE(COUNT(*), 0)::integer FROM skilltracking_persons ${w}`, params);
+    const monitored = await scalar(
+      `SELECT COALESCE(COUNT(DISTINCT person_id), 0)::integer FROM skilltracking_monitor ${mw}`,
+      mParams
+    );
+    const working = await scalar(
+      `SELECT COALESCE(COUNT(DISTINCT person_id), 0)::integer
+       FROM skilltracking_monitor
+       ${mw}${mw ? ' AND' : ' WHERE'} work_status = 'Working'`,
+      mParams
+    );
+    let earning = 0;
+    try {
+      const { w: sw, params: sparams } = mixSkillingWhere(filters);
+      earning = await scalar(
+        `SELECT COALESCE(COUNT(*), 0)::integer
+         FROM education_mixprogram m
+         ${sw} AND ${moneySql('m.post_income')} > 0`,
+        sparams
+      );
+    } catch (err) {
+      console.warn('[livelihoodAnalytics] sheet earning count skipped:', err.message);
+    }
+    const stages = [
+      { key: 'roster', label: 'On roster', value: roster },
+      { key: 'monitored', label: 'Monitored', value: monitored },
+      { key: 'working', label: 'Working', value: working },
+      { key: 'earning', label: 'Field sheet with post income', value: earning }
+    ].map((s, i, list) => ({
+      ...s,
+      pct_of_first: list[0].value > 0 ? Number(((s.value / list[0].value) * 100).toFixed(1)) : 0,
+      conversion_from_prev: i === 0 || list[i - 1].value === 0
+        ? null
+        : Number(((s.value / list[i - 1].value) * 100).toFixed(1))
+    }));
+    return { stages };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] funnel skipped:', err.message);
+    return { stages: [] };
+  }
+}
+
+export const TIME_TO_PLACEMENT_BUCKETS = [
+  '0–30 days',
+  '31–90 days',
+  '91–180 days',
+  '181–365 days',
+  'Over a year',
+  'Not placed'
+];
+
+export const INCOME_DELTA_BUCKETS = [
+  'Income fell',
+  'No change',
+  '+₹1–2,000',
+  '+₹2,001–5,000',
+  '+₹5,000+',
+  'No income pair'
+];
+
+/** One row per person: first/last monitor via window functions, then bucket labels. */
+export function placementWindowCte(whereSql) {
+  return `
+  WITH cleaned AS (
+    SELECT person_id, work_status, monthly_income, date_of_monitor
+    FROM skilltracking_monitor
+    ${whereSql}
+  ),
+  windowed AS (
+    SELECT
+      person_id,
+      FIRST_VALUE(date_of_monitor) OVER (
+        PARTITION BY person_id ORDER BY date_of_monitor
+      ) AS first_dt,
+      FIRST_VALUE(CASE WHEN work_status = 'Working' THEN date_of_monitor END) OVER (
+        PARTITION BY person_id
+        ORDER BY CASE WHEN work_status = 'Working' THEN 0 ELSE 1 END,
+                 date_of_monitor
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+      ) AS first_working_dt,
+      FIRST_VALUE(CASE WHEN monthly_income ~ '^[0-9]+$' THEN monthly_income::integer END) OVER (
+        PARTITION BY person_id
+        ORDER BY CASE WHEN monthly_income ~ '^[0-9]+$' THEN 0 ELSE 1 END,
+                 date_of_monitor
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+      ) AS first_income,
+      FIRST_VALUE(CASE WHEN monthly_income ~ '^[0-9]+$' THEN monthly_income::integer END) OVER (
+        PARTITION BY person_id
+        ORDER BY CASE WHEN monthly_income ~ '^[0-9]+$' THEN 0 ELSE 1 END,
+                 date_of_monitor DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+      ) AS last_income
+    FROM cleaned
+  ),
+  people AS (
+    SELECT DISTINCT ON (person_id)
+      person_id, first_dt, first_working_dt, first_income, last_income
+    FROM windowed
+    ORDER BY person_id
+  ),
+  classified AS (
+    SELECT
+      person_id,
+      first_dt,
+      first_working_dt,
+      first_income,
+      last_income,
+      CASE
+        WHEN first_working_dt IS NULL
+          OR first_working_dt::text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          OR first_dt::text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          THEN 'Not placed'
+        WHEN (first_working_dt::date - first_dt::date) < 0 THEN 'Not placed'
+        WHEN (first_working_dt::date - first_dt::date) <= 30 THEN '0–30 days'
+        WHEN (first_working_dt::date - first_dt::date) <= 90 THEN '31–90 days'
+        WHEN (first_working_dt::date - first_dt::date) <= 180 THEN '91–180 days'
+        WHEN (first_working_dt::date - first_dt::date) <= 365 THEN '181–365 days'
+        ELSE 'Over a year'
+      END AS time_bucket,
+      CASE
+        WHEN first_income IS NULL OR last_income IS NULL THEN 'No income pair'
+        WHEN last_income - first_income < 0 THEN 'Income fell'
+        WHEN last_income - first_income = 0 THEN 'No change'
+        WHEN last_income - first_income <= 2000 THEN '+₹1–2,000'
+        WHEN last_income - first_income <= 5000 THEN '+₹2,001–5,000'
+        ELSE '+₹5,000+'
+      END AS delta_bucket
+    FROM people
+  )`;
+}
+
+export async function getPlacementDistributions(filters) {
+  const { clauses, params } = lf(filters, {
+    state_col: 'state_id',
+    district_col: 'district_id',
+    date_col: 'date_of_monitor'
+  });
+  clauses.push(validDateClause('date_of_monitor'));
+  clauses.push(`date_of_monitor ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'`);
+  const w = whereStr(clauses);
+  const empty = { time_to_placement: [], income_delta: [] };
+  const cte = placementWindowCte(w);
+
+  try {
+    const timeRows = await fetchall(
+      `${cte}
+       SELECT time_bucket AS label, COUNT(*)::integer AS value
+       FROM classified
+       GROUP BY time_bucket`,
+      params
+    );
+    const timeMap = new Map(timeRows.map((r) => [r.label, Number(r.value) || 0]));
+    const pre = moneySql('m.pre_income');
+    const post = moneySql('m.post_income');
+    const { w: sw, params: sparams } = mixSkillingWhere(filters);
+    let deltaRows = [];
+    try {
+      deltaRows = await fetchall(
+        `SELECT CASE
+           WHEN ${pre} IS NULL OR ${post} IS NULL THEN 'No income pair'
+           WHEN ${post} - ${pre} < 0 THEN 'Income fell'
+           WHEN ${post} - ${pre} = 0 THEN 'No change'
+           WHEN ${post} - ${pre} <= 2000 THEN '+₹1–2,000'
+           WHEN ${post} - ${pre} <= 5000 THEN '+₹2,001–5,000'
+           ELSE '+₹5,000+'
+         END AS label,
+         COUNT(*)::integer AS value
+         FROM education_mixprogram m
+         ${sw}
+         GROUP BY 1`,
+        sparams
+      );
+    } catch (err) {
+      console.warn('[livelihoodAnalytics] sheet income delta skipped:', err.message);
+    }
+    const deltaMap = new Map(deltaRows.map((r) => [r.label, Number(r.value) || 0]));
+    return {
+      time_to_placement: TIME_TO_PLACEMENT_BUCKETS.map((label) => ({
+        label,
+        value: timeMap.get(label) || 0
+      })),
+      income_delta: INCOME_DELTA_BUCKETS.map((label) => ({
+        label,
+        value: deltaMap.get(label) || 0
+      }))
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] distributions skipped:', err.message);
+    return empty;
+  }
+}
+
+/** Each later year is a running total. `added` is this year minus the previous year. */
+export function farmerIncrements(rows, valueKey = 'farmers') {
+  const sorted = [...(rows || [])].sort((a, b) => String(a.year).localeCompare(String(b.year)));
+  let prev = null;
+  return sorted.map((r, idx) => {
+    const stock = Number(r[valueKey] ?? r.stock ?? r.value) || 0;
+    const added = prev == null ? stock : Math.max(0, stock - prev);
+    const dropped = prev != null && stock < prev ? prev - stock : 0;
+    const out = {
+      year: r.year,
+      stock,
+      added,
+      dropped,
+      opening: idx === 0
+    };
+    prev = stock;
+    return out;
+  });
+}
+
+export async function fetchFarmerYearSeries() {
+  const empty = { by_year: [], locations_by_year: {} };
+  try {
+    const yearRows = await fetchall(
+      `SELECT m.year,
+              COALESCE(SUM(m.number_of_farmers), 0)::integer AS farmers
+       FROM education_mixprogram m
+       WHERE ${MIX_CANONICAL_ROW} AND m.program_id::text IN ('1','2')
+         AND NULLIF(TRIM(m.year), '') IS NOT NULL
+       GROUP BY m.year
+       ORDER BY m.year`
+    );
+    const locRows = await fetchall(
+      `SELECT m.year,
+              COALESCE(${displaySql('m.location')}, 'Unknown') AS label,
+              COALESCE(SUM(m.number_of_farmers), 0)::integer AS farmers
+       FROM education_mixprogram m
+       WHERE ${MIX_CANONICAL_ROW} AND m.program_id::text IN ('1','2')
+         AND NULLIF(TRIM(m.year), '') IS NOT NULL
+       GROUP BY m.year, ${foldSql('m.location')}
+       ORDER BY m.year, farmers DESC`
+    );
+    const byYear = farmerIncrements(yearRows);
+    const locHistory = {};
+    for (const row of locRows) {
+      if (!locHistory[row.label]) locHistory[row.label] = [];
+      locHistory[row.label].push({ year: row.year, farmers: Number(row.farmers) || 0 });
+    }
+    const locationsByYear = {};
+    for (const [label, hist] of Object.entries(locHistory)) {
+      for (const point of farmerIncrements(hist)) {
+        if (!locationsByYear[point.year]) locationsByYear[point.year] = [];
+        locationsByYear[point.year].push({
+          label,
+          value: point.stock,
+          stock: point.stock,
+          added: point.added,
+          dropped: point.dropped,
+          opening: point.opening
+        });
+      }
+    }
+    Object.keys(locationsByYear).forEach((yr) => {
+      locationsByYear[yr].sort((a, b) => (b.stock || b.value) - (a.stock || a.value));
+    });
+    return { by_year: byYear, locations_by_year: locationsByYear };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] farmer year series skipped:', err.message);
+    return empty;
+  }
+}
+
+export async function getMixprogramFarmers(filters) {
+  const year = filters?.academic_year || filters?.financial_year;
+  const params = {};
+  const yearClauses = [MIX_CANONICAL_ROW];
+  if (year) {
+    yearClauses.push('m.year = :year');
+    params.year = year;
+  }
+  const farmerWhere = whereStr([...yearClauses, `m.program_id::text IN ('1','2')`]);
+  const otherWhere = whereStr([
+    ...yearClauses,
+    `m.program_id::text NOT IN ('1','2','3','4','5','6','7','8','9','10','11','12')`
+  ]);
+  const empty = {
+    status: 'no_data',
+    farmers: 0,
+    locations: 0,
+    by_location: [],
+    by_year: [],
+    locations_by_year: {},
+    other: []
+  };
+  try {
+    let farmers = 0;
+    let locations = 0;
+    let byLocation = [];
+    try {
+      const kpis = await fetchall(
+        `SELECT COALESCE(SUM(m.number_of_farmers), 0)::integer AS farmers,
+                COUNT(DISTINCT ${foldSql('m.location')}) FILTER (WHERE NULLIF(btrim(m.location), '') IS NOT NULL)::integer AS locations
+         FROM education_mixprogram m
+         ${farmerWhere}`,
+        params
+      );
+      byLocation = await fetchall(
+        `SELECT COALESCE(${displaySql('m.location')}, 'Unknown') AS label,
+                COALESCE(SUM(m.number_of_farmers), 0)::integer AS value
+         FROM education_mixprogram m
+         ${farmerWhere}
+         GROUP BY ${foldSql('m.location')}
+         ORDER BY value DESC`,
+        params
+      );
+      farmers = Number(kpis[0]?.farmers) || 0;
+      byLocation = mergeSimilarLabels(byLocation.filter((r) => Number(r.value) > 0));
+      locations = byLocation.length;
+    } catch (err) {
+      console.warn('[livelihoodAnalytics] mixprogram farmers columns skipped:', err.message);
+    }
+
+    let other = [];
+    try {
+      const otherPrograms = await fetchall(
+        `SELECT m.program_id::text AS program_id,
+                COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS label,
+                COUNT(*)::integer AS rows,
+                COUNT(DISTINCT ${foldSql('m.location')}) FILTER (WHERE NULLIF(btrim(m.location), '') IS NOT NULL)::integer AS locations
+         FROM education_mixprogram m
+         LEFT JOIN skilltracking_program p ON p.program_id::text = m.program_id::text
+         ${otherWhere}
+         GROUP BY m.program_id, p.program_name
+         ORDER BY rows DESC`,
+        params
+      );
+      const otherLocations = await fetchall(
+        `SELECT m.program_id::text AS program_id,
+                COALESCE(${displaySql('m.location')}, 'Unknown') AS label,
+                COUNT(*)::integer AS value
+         FROM education_mixprogram m
+         ${otherWhere}
+         GROUP BY m.program_id, ${foldSql('m.location')}
+         ORDER BY value DESC`,
+        params
+      );
+      const locByPid = {};
+      for (const row of otherLocations) {
+        if (!locByPid[row.program_id]) locByPid[row.program_id] = [];
+        locByPid[row.program_id].push({ label: row.label, value: Number(row.value) || 0 });
+      }
+      Object.keys(locByPid).forEach((pid) => {
+        locByPid[pid] = mergeSimilarLabels(locByPid[pid]);
+      });
+      other = otherPrograms.map((p) => ({
+        program_id: p.program_id,
+        label: p.label,
+        rows: Number(p.rows) || 0,
+        locations: Number(p.locations) || 0,
+        by_location: locByPid[p.program_id] || []
+      }));
+    } catch (err) {
+      console.warn('[livelihoodAnalytics] mixprogram other skipped:', err.message);
+    }
+
+    const yearSeries = await fetchFarmerYearSeries();
+    if (!farmers && !other.length && !yearSeries.by_year.length) {
+      return empty;
+    }
+    return {
+      status: 'ok',
+      farmers,
+      locations,
+      by_location: byLocation,
+      by_year: yearSeries.by_year,
+      locations_by_year: yearSeries.locations_by_year,
+      other
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] mixprogram farmers skipped:', err.message);
+    return empty;
+  }
+}
+
+export async function getMixprogramSkilling(filters) {
+  const { clauses, params } = mixYearClauses(filters);
+  clauses.push(`m.program_id::text = '11'`);
+  const w = whereStr(clauses);
+  const empty = { status: 'no_data' };
+  try {
+    const kpis = await fetchall(
+      `SELECT COUNT(*)::integer AS people,
+              COUNT(DISTINCT ${foldSql('m.course_name')}) FILTER (WHERE NULLIF(btrim(m.course_name), '') IS NOT NULL)::integer AS courses,
+              COUNT(DISTINCT ${foldSql('m.location')}) FILTER (WHERE NULLIF(btrim(m.location), '') IS NOT NULL)::integer AS locations,
+              COUNT(*) FILTER (WHERE ${moneySql('m.pre_income')} IS NOT NULL)::integer AS with_pre,
+              COUNT(*) FILTER (WHERE ${moneySql('m.post_income')} IS NOT NULL)::integer AS with_post,
+              COUNT(*) FILTER (
+                WHERE ${moneySql('m.pre_income')} IS NOT NULL
+                  AND ${moneySql('m.post_income')} IS NOT NULL
+              )::integer AS with_both,
+              COALESCE(AVG(${moneySql('m.pre_income')}), 0) AS avg_pre,
+              COALESCE(AVG(${moneySql('m.post_income')}), 0) AS avg_post
+       FROM education_mixprogram m
+       ${w}`,
+      params
+    );
+    const people = Number(kpis[0]?.people) || 0;
+    if (!people) return empty;
+    const byCourse = await fetchall(
+      `SELECT COALESCE(${displaySql('m.course_name')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${foldSql('m.course_name')} ORDER BY value DESC`,
+      params
+    );
+    const byGender = await fetchall(
+      `SELECT COALESCE(${displaySql('m.person_gender')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${softFoldSql('m.person_gender')} ORDER BY value DESC`,
+      params
+    );
+    const byPlacement = await fetchall(
+      `SELECT COALESCE(${displaySql('m.placement_status')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${softFoldSql('m.placement_status')} ORDER BY value DESC`,
+      params
+    );
+    const byCategory = await fetchall(
+      `SELECT COALESCE(${displaySql('m.person_category')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${softFoldSql('m.person_category')} ORDER BY value DESC`,
+      params
+    );
+    const byCourseIncome = await fetchall(
+      `SELECT COALESCE(${displaySql('m.course_name')}, 'Unknown') AS label,
+              COALESCE(AVG(${moneySql('m.pre_income')}), 0) AS avg_pre,
+              COALESCE(AVG(${moneySql('m.post_income')}), 0) AS avg_post,
+              COUNT(*) FILTER (WHERE ${moneySql('m.pre_income')} IS NOT NULL)::integer AS n_pre,
+              COUNT(*) FILTER (WHERE ${moneySql('m.post_income')} IS NOT NULL)::integer AS n_post
+       FROM education_mixprogram m ${w}
+       GROUP BY ${foldSql('m.course_name')}
+       HAVING COUNT(*) FILTER (WHERE ${moneySql('m.pre_income')} IS NOT NULL) > 0
+           OR COUNT(*) FILTER (WHERE ${moneySql('m.post_income')} IS NOT NULL) > 0
+       ORDER BY n_post DESC, n_pre DESC`,
+      params
+    );
+    const scatter = await fetchall(
+      `SELECT ${moneySql('m.pre_income')} AS x, ${moneySql('m.post_income')} AS y
+       FROM education_mixprogram m
+       ${w}
+         AND ${moneySql('m.pre_income')} IS NOT NULL
+         AND ${moneySql('m.post_income')} IS NOT NULL`,
+      params
+    );
+    const locCourse = await fetchall(
+      `SELECT COALESCE(${displaySql('m.location')}, 'Unknown') AS location,
+              COALESCE(${displaySql('m.course_name')}, 'Unknown') AS course,
+              COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${foldSql('m.location')}, ${foldSql('m.course_name')}`,
+      params
+    );
+    const courses = [...new Set(locCourse.map((r) => r.course))].slice(0, 10);
+    const locations = [...new Set(locCourse.map((r) => r.location))].slice(0, 12);
+    const map = new Map(locCourse.map((r) => [`${r.course}\t${r.location}`, Number(r.value) || 0]));
+    const cells = [];
+    courses.forEach((c, xi) => {
+      locations.forEach((l, yi) => cells.push([xi, yi, map.get(`${c}\t${l}`) || 0]));
+    });
+    return {
+      status: 'ok',
+      people,
+      courses: Number(kpis[0]?.courses) || 0,
+      locations: Number(kpis[0]?.locations) || 0,
+      with_pre: Number(kpis[0]?.with_pre) || 0,
+      with_post: Number(kpis[0]?.with_post) || 0,
+      with_both: Number(kpis[0]?.with_both) || 0,
+      avg_pre: Number(kpis[0]?.avg_pre) || 0,
+      avg_post: Number(kpis[0]?.avg_post) || 0,
+      by_course: byCourse,
+      by_course_income: byCourseIncome,
+      by_gender: byGender,
+      by_placement: byPlacement,
+      by_category: byCategory,
+      scatter: scatter.map((r) => [Number(r.x) || 0, Number(r.y) || 0]),
+      heatmap: { x: courses, y: locations, cells }
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] mixprogram skilling skipped:', err.message);
+    return empty;
+  }
+}
+
+export async function getMixprogramDidi(filters) {
+  const { clauses, params } = mixYearClauses(filters);
+  clauses.push(`m.program_id::text = '12'`);
+  const w = whereStr(clauses);
+  const empty = { status: 'no_data' };
+  try {
+    const kpis = await fetchall(
+      `SELECT COUNT(*)::integer AS people,
+              COUNT(*) FILTER (WHERE ${moneySql('m.pre_income')} IS NOT NULL)::integer AS with_pre,
+              COUNT(*) FILTER (WHERE ${moneySql('m.post_income')} IS NOT NULL)::integer AS with_post,
+              COALESCE(AVG(${moneySql('m.pre_income')}), 0) AS avg_pre,
+              COALESCE(AVG(${moneySql('m.post_income')}), 0) AS avg_post,
+              COUNT(*) FILTER (WHERE ${moneySql('m.pre_income_individual')} IS NOT NULL)::integer AS with_pre_ind,
+              COUNT(*) FILTER (WHERE ${moneySql('m.post_income_individual')} IS NOT NULL)::integer AS with_post_ind,
+              COALESCE(AVG(${moneySql('m.pre_income_individual')}), 0) AS avg_pre_ind,
+              COALESCE(AVG(${moneySql('m.post_income_individual')}), 0) AS avg_post_ind
+       FROM education_mixprogram m ${w}`,
+      params
+    );
+    const people = Number(kpis[0]?.people) || 0;
+    if (!people) return empty;
+    const byPhase = await fetchall(
+      `SELECT COALESCE(${displaySql('m.phase')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w} GROUP BY ${softFoldSql('m.phase')} ORDER BY value DESC`,
+      params
+    );
+    const byType = await fetchall(
+      `SELECT COALESCE(${displaySql('m.training_type')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w} GROUP BY ${softFoldSql('m.training_type')} ORDER BY value DESC`,
+      params
+    );
+    const byGender = await fetchall(
+      `SELECT COALESCE(${displaySql('m.person_gender')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w} GROUP BY ${softFoldSql('m.person_gender')} ORDER BY value DESC`,
+      params
+    );
+    const byLocation = await fetchall(
+      `SELECT COALESCE(${displaySql('m.location')}, 'Unknown') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w} GROUP BY ${foldSql('m.location')} ORDER BY value DESC`,
+      params
+    );
+    const scatter = await fetchall(
+      `SELECT ${moneySql('m.pre_income_individual')} AS x, ${moneySql('m.post_income_individual')} AS y
+       FROM education_mixprogram m
+       ${w}
+         AND ${moneySql('m.pre_income_individual')} IS NOT NULL
+         AND ${moneySql('m.post_income_individual')} IS NOT NULL`,
+      params
+    );
+    const flows = await fetchall(
+      `SELECT COALESCE(${displaySql('m.phase')}, 'Unknown') AS source,
+              COALESCE(${displaySql('m.training_type')}, 'Unknown') AS target,
+              COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY ${softFoldSql('m.phase')}, ${softFoldSql('m.training_type')}`,
+      params
+    );
+    const typeNames = new Set(flows.map((f) => f.target));
+    const phaseNames = new Set(flows.map((f) => f.source));
+    const renameType = (t) => (phaseNames.has(t) ? `Training: ${t}` : t);
+    const sankeyNodes = [
+      ...[...phaseNames].map((n) => ({ name: n })),
+      ...[...typeNames].map((n) => ({ name: renameType(n) }))
+    ];
+    const links = flows.map((f) => ({
+      source: f.source,
+      target: renameType(f.target),
+      value: Number(f.value) || 0
+    }));
+    return {
+      status: 'ok',
+      people,
+      with_pre: Number(kpis[0]?.with_pre) || 0,
+      with_post: Number(kpis[0]?.with_post) || 0,
+      avg_pre: Number(kpis[0]?.avg_pre) || 0,
+      avg_post: Number(kpis[0]?.avg_post) || 0,
+      with_pre_ind: Number(kpis[0]?.with_pre_ind) || 0,
+      with_post_ind: Number(kpis[0]?.with_post_ind) || 0,
+      avg_pre_ind: Number(kpis[0]?.avg_pre_ind) || 0,
+      avg_post_ind: Number(kpis[0]?.avg_post_ind) || 0,
+      by_phase: byPhase,
+      by_type: byType,
+      by_gender: byGender,
+      by_location: mergeSimilarLabels(byLocation),
+      scatter: scatter.map((r) => [Number(r.x) || 0, Number(r.y) || 0]),
+      sankey: { nodes: sankeyNodes, links }
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] mixprogram didi skipped:', err.message);
+    return empty;
+  }
 }

@@ -7,9 +7,39 @@
 
 export const API_BASE = 'https://jubicare.indevconsultancy.com/api/centralizeddashboardapi';
 
-export const DEFAULT_YEAR = process.env.HEALTH_SYNC_START?.slice(0, 4) || '2025';
-export const DEFAULT_EDU_YEAR = (process.env.EDU_MIX_YEARS || '2025-26').split(',')[0].trim();
-export const DEFAULT_PROGRAM_ID = process.env.EDU_PROGRAM_ID || '5';
+/** Calendar year, e.g. 2026. */
+export function currentCalendarYear(date = new Date()) {
+  return String(date.getFullYear());
+}
+
+/**
+ * Indian financial / academic year (1 Apr – 31 Mar), e.g. 2026-27.
+ */
+export function currentFinancialYear(date = new Date()) {
+  const year = date.getFullYear();
+  const startYear = date.getMonth() >= 3 ? year : year - 1;
+  const endYY = String((startYear + 1) % 100).padStart(2, '0');
+  return `${startYear}-${endYY}`;
+}
+
+export function financialYearList(count = 6, date = new Date()) {
+  const start = Number(currentFinancialYear(date).split('-')[0]);
+  const years = [];
+  for (let i = 0; i < count; i++) {
+    const y = start - i;
+    years.push(`${y}-${String((y + 1) % 100).padStart(2, '0')}`);
+  }
+  return years;
+}
+
+function envOr(name, fallback) {
+  const value = typeof process !== 'undefined' ? process.env[name] : '';
+  return (value && String(value).trim()) || fallback;
+}
+
+export const DEFAULT_YEAR = envOr('HEALTH_DEFAULT_YEAR', currentCalendarYear());
+export const DEFAULT_EDU_YEAR = envOr('EDU_DEFAULT_YEAR', currentFinancialYear());
+export const DEFAULT_PROGRAM_ID = envOr('EDU_PROGRAM_ID', '5');
 
 export const HEAVY_HEALTH_TABLES = new Set(['profile_patients', 'patient_appointments_new']);
 export const APPOINTMENT_TABLES = new Set(['patient_appointments_new']);
@@ -44,7 +74,7 @@ export const TABLE_ENDPOINTS = [
     tables: [
       'state', 'district', 'block', 'village', 'persons', 'monitor',
       'batch_list', 'qualification', 'skill_center', 'training_stream',
-      'pre_post_master'
+      'pre_post_master', 'program', 'kkp_pre_and_post'
     ]
   },
   {
@@ -95,10 +125,10 @@ export const AGG_ENDPOINTS = [
     thematic: 'health',
     sheet: 'HL_disease_patients',
     path: 'health_desease.php',
-    label: 'Disease patients (needs disease_id)',
+    label: 'Disease patients',
     needsDiseaseId: true,
     heavy: true,
-    caption: 'Pass a disease_id from the summary. Bounded Limit — PHP 500s on a full dump.',
+    caption: 'Requires a disease ID from the disease summary. PHP Limit max is 20.',
     body: { module_type: 'health', Limit: '20', offset: '0' }
   },
   {
@@ -112,11 +142,23 @@ export const AGG_ENDPOINTS = [
     body: { module_type: 'health' }
   },
   {
+    module: 'health',
+    thematic: 'health',
+    sheet: 'HL_symptom_patients',
+    path: SYMPTOM_PATHS[0],
+    altPaths: SYMPTOM_PATHS.slice(1),
+    label: 'Symptom patients',
+    needsSymptomId: true,
+    heavy: true,
+    caption: 'Requires a symptom ID from the symptom summary.',
+    body: { module_type: 'health', Limit: '20', offset: '0' }
+  },
+  {
     module: 'education',
     thematic: 'education',
     sheet: 'ED_mixprogram',
     path: 'mixprogram.php',
-    label: 'Mixprogramme schools',
+    label: 'School and field sheets',
     body: {}
   }
 ];
@@ -138,6 +180,8 @@ const TABLE_LABELS = {
   skill_center: 'Skill centres',
   training_stream: 'Trades / streams',
   pre_post_master: 'Pre/post master',
+  program: 'Programmes',
+  kkp_pre_and_post: 'KKP pre/post values',
   enterprise_support: 'Enterprise members',
   enterprise_support_monitoring: 'FY profit monitor',
   market_access: 'Market access',
@@ -190,7 +234,7 @@ export function listLiveSheets() {
         needsDates: Boolean(ep.needsDates),
         needsDiseaseId: false,
         caption: heavy
-          ? 'Windowed extract — PHP 500s on a full year. Default window is a short end-of-year slice unless you set from_date/to_date.'
+          ? 'PHP ignores Limit on health.php. Preview is capped at 20 rows; use a short from_date/to_date.'
           : null
       });
     }
@@ -204,6 +248,7 @@ export function listLiveSheets() {
       label: ep.label,
       heavy: Boolean(ep.heavy),
       needsDiseaseId: Boolean(ep.needsDiseaseId),
+      needsSymptomId: Boolean(ep.needsSymptomId),
       optional: Boolean(ep.optional),
       caption: ep.caption || null
     });
@@ -257,7 +302,8 @@ export function buildJob(sheet, opts = {}) {
     if (ep.sheet !== sheet) continue;
     const body = { ...ep.body };
     if (ep.sheet === 'ED_mixprogram') {
-      body.program_id = programId;
+      if (opts.program_id) body.program_id = String(opts.program_id);
+      else if (programId) body.program_id = programId;
       body.year = eduYear;
     } else if (ep.path.includes('health')) {
       body.year = year;
@@ -272,6 +318,16 @@ export function buildJob(sheet, opts = {}) {
       body.Limit = limit;
       body.offset = offset;
     }
+    if (ep.needsSymptomId) {
+      if (!opts.symptom_id) {
+        const err = new Error('symptom_id is required (pick one from HL_symptom_summary)');
+        err.code = 'NEEDS_SYMPTOM_ID';
+        throw err;
+      }
+      body.symptom_id = String(opts.symptom_id);
+      body.Limit = limit;
+      body.offset = offset;
+    }
     const altPaths = ep.altPaths || [];
     return {
       sheet: ep.sheet,
@@ -282,6 +338,7 @@ export function buildJob(sheet, opts = {}) {
       altUrls: altPaths.map((p) => `${API_BASE}/${p}`),
       body,
       needsDiseaseId: Boolean(ep.needsDiseaseId),
+      needsSymptomId: Boolean(ep.needsSymptomId),
       optional: Boolean(ep.optional),
       heavy: Boolean(ep.heavy)
     };

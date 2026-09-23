@@ -85,11 +85,6 @@ export default function UserManagementPage() {
   return (
     <div>
       {/* Header */}
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>User Management</h2>
-        <p className="section-sub">Manage platform access and roles</p>
-      </div>
-
       {/* Add User Card */}
       <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Add User</h3></div>

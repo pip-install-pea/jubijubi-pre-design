@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
-import { fetchall } from '@/lib/db.js';
+import { fetchall, isDatabaseConfigured } from '@/lib/db.js';
 
 export async function GET(req) {
   const user = await getSessionUser(req);
@@ -9,6 +9,9 @@ export async function GET(req) {
   }
 
   try {
+    if (!isDatabaseConfigured()) {
+      return NextResponse.json([]);
+    }
     const url = new URL(req.url);
     const state_id = url.searchParams.get('state_id');
     const module = url.searchParams.get('module') || 'health';
@@ -76,6 +79,6 @@ export async function GET(req) {
     return NextResponse.json(rows.map(r => ({ id: r.id, name: r.name })));
   } catch (err) {
     console.error('Error fetching locations:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json([]);
   }
 }

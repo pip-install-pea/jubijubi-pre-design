@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import Sidebar from './Sidebar';
 import GlobalFilters from './GlobalFilters';
+import { bindPrintLifecycle } from '../lib/printCharts';
 
 const AppContent = ({ children }) => {
   const { user, loading } = useAuth();
@@ -18,6 +19,8 @@ const AppContent = ({ children }) => {
       router.push('/login');
     }
   }, [user, loading, isLoginPath, router]);
+
+  useEffect(() => bindPrintLifecycle(), []);
 
   if (loading) {
     return (
@@ -39,7 +42,6 @@ const AppContent = ({ children }) => {
   }
 
   const handleFilterApply = (filters) => {
-    console.log('Filters Applied:', filters);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('app:filters:apply', { detail: filters }));
     }
@@ -47,14 +49,12 @@ const AppContent = ({ children }) => {
 
   return (
     <div className="app-layout">
-      {/* ── Sidebar ── */}
       <Sidebar />
 
-      {/* ── Main Area ── */}
       <div className="main-area" id="main-area">
-
-        {/* ── Filter Bar ── */}
-        <GlobalFilters onApply={handleFilterApply} />
+        <Suspense fallback={<div className="filter-bar"><div className="filter-bar__title">Jubilant</div></div>}>
+          <GlobalFilters onApply={handleFilterApply} />
+        </Suspense>
 
         {/* ── Page Content ── */}
         <main className="page-content">

@@ -43,7 +43,7 @@ export default function SyncLogsPage() {
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
       <div className="spinner"></div>
-      <span style={{ marginLeft: '12px', color: '#64748b' }}>Loading sync intelligence...</span>
+      <span style={{ marginLeft: '12px', color: '#64748b' }}>Loading...</span>
     </div>
   );
 
@@ -52,18 +52,12 @@ export default function SyncLogsPage() {
   return (
     <div>
       {/* Header */}
-      <div className="section-header">
-        <h2 className="card-title" style={{ fontSize: '24px', fontWeight: 'bold' }}>Data Sync</h2>
-        <p className="section-sub">Ingestion log and manual trigger</p>
-      </div>
-
       {/* Manual Sync Card */}
       <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Manual Sync</h3></div>
         <div className="card-body">
           <p className="text-muted" style={{ marginBottom: '1rem', color: '#64748b' }}>
-            Incremental pulls new rows. Full restack re-reads from HEALTH_SYNC_START (keep users/roles — truncate API tables only).
-            Runs in the background — check the log below.
+            Incremental updates new rows. Full refresh reloads the full history. Runs in the background — check the log below.
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             {isSuperAdmin ? (

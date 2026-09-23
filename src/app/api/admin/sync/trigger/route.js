@@ -13,6 +13,12 @@ export async function POST(req) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  if (process.env.VERCEL && process.env.ALLOW_VERCEL_SYNC !== 'true') {
+    return NextResponse.json({
+      error: 'Sync cannot finish on Vercel serverless. Point DATABASE_URL at the hosted database and run npm run db:sync on a laptop or a worker.'
+    }, { status: 501 });
+  }
+
   let force = false;
   try {
     const body = await req.json();

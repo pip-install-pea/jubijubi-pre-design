@@ -27,7 +27,7 @@ const BarChart = ({ data, title, onClick }) => {
     },
     plugins: {
       ...baseOptions.plugins,
-      title: { display: !!title, text: title, color: '#1B2A4A' }
+      title: { display: !!title, text: title, color: '#142033' }
     }
   };
 

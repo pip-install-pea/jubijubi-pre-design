@@ -52,7 +52,7 @@ export function parseApiResponse(raw) {
   return [];
 }
 
-export async function postPhp(endpoint, payload, { timeout = 30, maxRetries = 2, altUrls = [] } = {}) {
+export async function postPhpRaw(endpoint, payload, { timeout = 30, maxRetries = 2, altUrls = [] } = {}) {
   const urls = [`${API_BASE}/${endpoint}`, ...altUrls];
   let lastError = null;
 
@@ -63,11 +63,12 @@ export async function postPhp(endpoint, payload, { timeout = 30, maxRetries = 2,
           timeout: timeout * 1000,
           headers: { 'Content-Type': 'application/json' }
         });
-        return parseApiResponse(response.data);
+        return response.data;
       } catch (err) {
         lastError = err;
         const status = err.response?.status;
         if (status === 404 && url !== urls[urls.length - 1]) break;
+        if (status === 500) throw err;
         if (attempt < maxRetries) {
           await new Promise((res) => setTimeout(res, Math.pow(2, attempt) * 1000));
         }
@@ -75,6 +76,26 @@ export async function postPhp(endpoint, payload, { timeout = 30, maxRetries = 2,
     }
   }
   throw lastError;
+}
+
+export async function postPhp(endpoint, payload, opts = {}) {
+  return parseApiResponse(await postPhpRaw(endpoint, payload, opts));
+}
+
+export async function postPhpEnvelope(endpoint, payload, opts = {}) {
+  const raw = await postPhpRaw(endpoint, payload, opts);
+  const rows = parseApiResponse(raw);
+  const meta = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [key, val] of Object.entries(raw)) {
+      if (key === 'data' || key === 'status' || key === 'msg' || key === 'message') continue;
+      if (val != null && typeof val !== 'object') meta[key] = val;
+    }
+    if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+      Object.assign(meta, raw.data);
+    }
+  }
+  return { raw, meta, rows };
 }
 
 export function sanitiseRow(row) {

@@ -200,6 +200,20 @@ export const TABLE_SCHEMAS = {
     ]
   },
 
+  skilltracking_kkp_pre_and_post: {
+    thematic: 'education',
+    label: 'Education — KKP pre/post values',
+    primaryKey: 'id',
+    fields: [
+      { col: 'id', label: 'Row ID', type: 'text', required: true },
+      { col: 'financial_year', label: 'Financial year', type: 'text', placeholder: 'e.g. 2025-26' },
+      { col: 'location_name', label: 'Location', type: 'text' },
+      { col: 'value_name', label: 'Value', type: 'text', placeholder: 'e.g. Kindness' },
+      { col: 'pre_kkp', label: 'Pre score', type: 'text' },
+      { col: 'post_kkp', label: 'Post score', type: 'text' }
+    ]
+  },
+
   enterprise_market_access: {
     thematic: 'livelihood',
     label: 'Livelihood — Enterprise Market Access',
@@ -257,7 +271,7 @@ export const TABLE_SCHEMAS = {
 
   health_beneficiary_year: {
     thematic: 'health',
-    label: 'Health — Year envelope',
+    label: 'Health — Year totals',
     primaryKey: 'year',
     fields: [
       { col: 'year', label: 'Calendar year', type: 'text', required: true },
@@ -294,17 +308,34 @@ export const TABLE_SCHEMAS = {
     ]
   },
 
+  skilltracking_program: {
+    thematic: 'livelihood',
+    label: 'Livelihood — Programme catalogue',
+    primaryKey: 'program_id',
+    fields: [
+      { col: 'program_id', label: 'Programme ID', type: 'text', required: true },
+      { col: 'program_name', label: 'Programme name', type: 'text', required: true },
+      { col: 'code', label: 'Code', type: 'text' },
+      { col: 'status', label: 'Status', type: 'text' },
+    ]
+  },
+
   education_mixprogram: {
     thematic: 'education',
-    label: 'Education — Mixprogramme schools',
+    label: 'Education — Programme sheets',
     primaryKey: 'id',
     fields: [
       { col: 'id', label: 'Row ID', type: 'text', required: true },
-      { col: 'program_id', label: 'Programme ID', type: 'text' },
+      { col: 'program_id', label: 'Programme', type: 'select', lookup: { table: 'skilltracking_program', idCol: 'program_id', labelCol: 'program_name' } },
       { col: 'school_name', label: 'School name', type: 'text' },
       { col: 'location', label: 'Location', type: 'text' },
       { col: 'year', label: 'Year', type: 'text' },
       { col: 'students_total', label: 'Students total', type: 'number' },
+      { col: 'activity_name', label: 'Activity name', type: 'text' },
+      { col: 'number_of_farmers', label: 'Farmers', type: 'number' },
+      { col: 'total_sessions', label: 'Total sessions', type: 'number' },
+      { col: 'theme_touched', label: 'Theme', type: 'text' },
+      { col: 'person_gender', label: 'Person gender', type: 'text' },
     ]
   },
 

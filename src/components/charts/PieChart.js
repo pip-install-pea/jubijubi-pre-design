@@ -28,7 +28,7 @@ const PieChart = ({ data, title, onClick }) => {
     plugins: {
       ...baseOptions.plugins,
       legend: { ...baseOptions.plugins.legend, position: 'right' },
-      title: { display: !!title, text: title, color: '#1B2A4A' }
+      title: { display: !!title, text: title, color: '#142033' }
     }
   };
 
