@@ -1,23 +1,44 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Pool } from 'pg';
 
 let pool = null;
 let loggedTarget = false;
 
-function sslConfig(url) {
+function resolveCaPath() {
+  const fromEnv = process.env.DATABASE_CA;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    fromEnv,
+    path.join(process.cwd(), 'certs', 'global-bundle.pem'),
+    path.join(here, '..', '..', 'certs', 'global-bundle.pem')
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const abs = path.isAbsolute(candidate)
+      ? candidate
+      : path.join(process.cwd(), candidate);
+    if (fs.existsSync(abs)) return abs;
+  }
+  return null;
+}
+
+function sslConfig(url = process.env.DATABASE_URL || '') {
   const flag = String(process.env.DATABASE_SSL || '').toLowerCase();
-  if (flag === 'true' || flag === '1' || flag === 'require') {
-    return { rejectUnauthorized: false };
-  }
-  if (flag === 'false' || flag === '0' || flag === 'disable') {
+  if (flag === 'false' || flag === '0' || flag === 'disable') return false;
+  const wantsSsl = flag === 'true' || flag === '1' || flag === 'require'
+    || /sslmode=(require|verify-ca|verify-full)/i.test(url)
+    || /\.rds\.amazonaws\.com/i.test(url);
+  if (!wantsSsl) {
+    if (/sslmode=disable/i.test(url) || /localhost|127\.0\.0\.1/i.test(url)) return false;
     return false;
   }
-  if (/sslmode=(require|verify-ca|verify-full)/i.test(url)) {
-    return { rejectUnauthorized: false };
+  const caPath = resolveCaPath();
+  const isRds = /\.rds\.amazonaws\.com/i.test(url);
+  if (caPath) {
+    return { rejectUnauthorized: !isRds, ca: fs.readFileSync(caPath, 'utf8') };
   }
-  if (/sslmode=disable/i.test(url) || /localhost|127\.0\.0\.1/i.test(url)) {
-    return false;
-  }
-  return false;
+  return { rejectUnauthorized: false };
 }
 
 function parseDatabaseUrl(raw) {
@@ -113,7 +134,9 @@ function getPool() {
     database: parsed.database || undefined,
     user: parsed.user,
     password: String(parsed.password ?? ''),
-    ssl: sslConfig(process.env.DATABASE_URL)
+    ssl: sslConfig(process.env.DATABASE_URL),
+    keepAlive: true,
+    max: 8
   });
   if (!loggedTarget) {
     console.log(
@@ -124,10 +147,40 @@ function getPool() {
   return pool;
 }
 
+function resetPool() {
+  if (!pool) return;
+  const old = pool;
+  pool = null;
+  old.end().catch(() => {});
+}
+
+function isRetryableConnect(err) {
+  const code = err?.code || '';
+  return ['ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNREFUSED', '57P01', '57P03'].includes(code)
+    || /ETIMEDOUT|ECONNRESET|EPIPE|Connection terminated|timeout expired/i.test(String(err?.message || ''));
+}
+
+export async function query(text, params) {
+  let last;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await getPool().query(text, params);
+    } catch (err) {
+      last = err;
+      if (!isRetryableConnect(err) || attempt === 4) throw err;
+      console.warn(`[db] ${err.code || err.message} — reconnect ${attempt + 1}/5`);
+      resetPool();
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+    }
+  }
+  throw last;
+}
+
 const poolProxy = new Proxy(
   {},
   {
     get(_target, prop) {
+      if (prop === 'query') return query;
       const real = getPool();
       const value = real[prop];
       return typeof value === 'function' ? value.bind(real) : value;

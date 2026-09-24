@@ -4,6 +4,7 @@
  */
 const { Client } = require('pg');
 const crypto = require('crypto');
+const { clientConfig } = require('../src/lib/pgSsl.cjs');
 
 function generatePasswordHash(password) {
   const salt = crypto.randomBytes(12)
@@ -23,12 +24,7 @@ if (!url) {
   process.exit(1);
 }
 
-const client = new Client({
-  connectionString: url,
-  ssl: /sslmode=(require|verify-ca|verify-full)/i.test(url)
-    ? { rejectUnauthorized: false }
-    : false
-});
+const client = new Client(clientConfig(url));
 
 const AUTH_SQL = [
   `CREATE TABLE IF NOT EXISTS roles (

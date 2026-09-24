@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
+    "aws-sdk": "^2.1693.0",
     "axios": "^1.16.1",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
@@ -25,7 +26,7 @@
     "jose": "^6.2.3",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
-    "pg": "^8.21.0",
+    "pg": "^8.23.0",
     "react": "19.2.4",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "19.2.4",

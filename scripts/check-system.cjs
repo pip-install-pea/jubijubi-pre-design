@@ -3,6 +3,7 @@
  * Usage: node --env-file=.env scripts/check-system.cjs
  */
 const { Client } = require('pg');
+const { clientConfig } = require('../src/lib/pgSsl.cjs');
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -27,12 +28,7 @@ const TABLES = [
 ];
 
 async function main() {
-  const client = new Client({
-    connectionString: url,
-    ssl: /sslmode=(require|verify-ca|verify-full)/i.test(url)
-      ? { rejectUnauthorized: false }
-      : false
-  });
+  const client = new Client(clientConfig(url));
   await client.connect();
   const counts = {};
   for (const table of TABLES) {

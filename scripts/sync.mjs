@@ -4,9 +4,14 @@
  */
 const force = process.argv.includes('--force');
 const { syncAll } = await import('../src/lib/syncEngine.js');
-const summary = await syncAll(force);
-if (summary?.error) {
-  console.error('[sync]', summary.error);
+try {
+  const summary = await syncAll(force);
+  if (summary?.error) {
+    console.error('[sync]', summary.error);
+    process.exit(1);
+  }
+  console.log(JSON.stringify(summary, null, 2));
+} catch (err) {
+  console.error('[sync] crashed:', err.code || '', err.message || err);
   process.exit(1);
 }
-console.log(JSON.stringify(summary, null, 2));

@@ -32,6 +32,7 @@ scripts/*
 # misc
 .DS_Store
 *.pem
+!certs/global-bundle.pem
 
 # debug
 npm-debug.log*

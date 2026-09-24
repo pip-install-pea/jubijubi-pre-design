@@ -6,7 +6,14 @@ DATABASE_URL=postgresql://jubilant:jubilant@localhost:5433/jubilant?sslmode=disa
 # Neon / cloud (SSL required):
 # DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/dbname?sslmode=require
 
-# Optional override: true | false. If unset, sslmode in DATABASE_URL wins.
+# AWS RDS (eu-north-1). URL-encode special characters in the password.
+# Create a jubilant database instead of using the default postgres admin DB:
+#   DATABASE_URL=postgresql://postgres:URL_ENCODED_PASSWORD@database-1.crmoq24i8su0.eu-north-1.rds.amazonaws.com:5432/jubilant?sslmode=require
+# DATABASE_SSL=true
+# Optional. Defaults to certs/global-bundle.pem (official AWS RDS CA).
+# DATABASE_CA=certs/global-bundle.pem
+
+# Optional override: true | false. If unset, sslmode in DATABASE_URL or *.rds.amazonaws.com wins.
 # DATABASE_SSL=false
 
 # Local sign-in when Postgres is not configured (health graphs still hit live PHP).
@@ -20,11 +27,12 @@ SECRET_KEY=your_fallback_secret_key_here
 JWT_SECRET=your_jwt_secret_key_here
 
 # Deploy
-# 1. Point DATABASE_URL at hosted Postgres (sslmode=require).
+# 1. Point DATABASE_URL at hosted Postgres (sslmode=require). For RDS use the
+#    host above, URL-encoded password, and database jubilant (create it first).
 # 2. From this folder: npm run db:migrate
 #    First admin: SEED_ADMIN=1 ADMIN_USER=... ADMIN_PASSWORD=... npm run db:migrate
 # 3. Load data from a laptop/worker (not Vercel): npm run db:sync
-# 4. Vercel env: DATABASE_URL, JWT_SECRET, NODE_ENV=production
+# 4. Vercel / VM env: DATABASE_URL, JWT_SECRET, NODE_ENV=production
 #    Do not set DEV_LOGIN_* on Vercel. AUTO_SYNC stays off there.
 # ADMIN_USER=admin
 # ADMIN_PASSWORD=change-me

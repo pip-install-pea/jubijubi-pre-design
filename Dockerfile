@@ -20,6 +20,7 @@ RUN useradd --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY certs ./certs
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
@@ -31,3 +32,4 @@ RUN npm init -y && npm install --omit=dev pg axios
 COPY sql ./sql
 COPY scripts ./scripts
 COPY src ./src
+COPY certs ./certs
