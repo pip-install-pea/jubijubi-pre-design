@@ -4,9 +4,9 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import RankingBar from '../../../components/charts/RankingBar';
 import BrandLine from '../../../components/charts/BrandLine';
+import ColumnBar from '../../../components/charts/ColumnBar';
 import EChart, {
   treemapOption,
-  scatterOption,
   sankeyOption,
   roseOption
 } from '../../../components/charts/EChart';
@@ -149,11 +149,12 @@ export default function EnterprisePage() {
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Pre vs post individual income</h3></div>
+                    <div className="card-header"><h3>Individual income change, pre to post</h3></div>
                     <div className="card-body">
-                      <EChart
-                        option={scatterOption(data.didi.scatter, { xName: 'Pre individual', yName: 'Post individual' })}
-                        caption="pre_income_individual vs post_income_individual. Household post_income is the KPI above, not this scatter."
+                      <ColumnBar
+                        labels={(data.didi.income_change || []).map((r) => r.label)}
+                        values={(data.didi.income_change || []).map((r) => r.value)}
+                        caption="People with both an individual pre and post income. Household post income stays in the KPI above."
                       />
                     </div>
                   </div>

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, buildFilters, whereStr, validDateClause } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
-import { placementWindowCte, mixWorkingSql } from '@/lib/livelihoodAnalytics.js';
+import { placementWindowCte, mixWorkingSql, placementStatusSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -1010,9 +1010,13 @@ export async function GET(req) {
           ...mixCommon,
           extraClauses: [
             `m.program_id::text = '11'`,
-            value
-              ? (field === 'location' || field === 'course_name' ? eqFold(`m.${field}`, 'drill_value') : eqSoft(`m.${field}`, 'drill_value'))
-              : 'TRUE'
+            !value
+              ? 'TRUE'
+              : field === 'placement_status'
+                ? `${placementStatusSql('m.placement_status')} = :drill_value`
+                : (field === 'location' || field === 'course_name'
+                  ? eqFold(`m.${field}`, 'drill_value')
+                  : eqSoft(`m.${field}`, 'drill_value'))
           ],
           extraParams: { drill_value: value },
           qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',

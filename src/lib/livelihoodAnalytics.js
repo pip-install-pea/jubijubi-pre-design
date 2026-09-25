@@ -21,6 +21,20 @@ function mixYearClauses(filters) {
   return { clauses, params };
 }
 
+export function placementStatusSql(col = 'm.placement_status') {
+  const raw = `btrim(COALESCE(${col}::text, ''))`;
+  return `CASE
+    WHEN ${raw} = '' THEN 'Not reported'
+    WHEN ${raw} ~* 'further[[:space:]]*stud' THEN 'Further study'
+    WHEN ${raw} ~* 'on[[:space:]]*going|ongoing' THEN 'Ongoing course'
+    WHEN ${raw} ~* 'self[[:space:]]*employ' THEN 'Self employment'
+    WHEN ${raw} ~* 'job[[:space:]]*search' THEN 'Job searching'
+    WHEN ${raw} ~* 'home[[:space:]]*maker' THEN 'Homemaker'
+    WHEN ${raw} ~* 'not[[:space:]]*work|unemployed' THEN 'Not working'
+    ELSE 'Working'
+  END`;
+}
+
 export function mixWorkingSql() {
   return `(
     LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) IN (
@@ -681,6 +695,31 @@ export const INCOME_DELTA_BUCKETS = [
   'No income pair'
 ];
 
+function incomeDeltaSql(pre, post) {
+  return `CASE
+    WHEN ${pre} IS NULL OR ${post} IS NULL THEN 'No income pair'
+    WHEN ${post} - ${pre} < 0 THEN 'Income fell'
+    WHEN ${post} - ${pre} = 0 THEN 'No change'
+    WHEN ${post} - ${pre} <= 2000 THEN '+₹1–2,000'
+    WHEN ${post} - ${pre} <= 5000 THEN '+₹2,001–5,000'
+    ELSE '+₹5,000+'
+  END`;
+}
+
+async function incomeChangeBuckets(pre, post, whereSql, params) {
+  const rows = await fetchall(
+    `SELECT ${incomeDeltaSql(pre, post)} AS label, COUNT(*)::integer AS value
+     FROM education_mixprogram m
+     ${whereSql}
+     GROUP BY 1`,
+    params
+  );
+  const map = new Map(rows.map((r) => [r.label, Number(r.value) || 0]));
+  return INCOME_DELTA_BUCKETS
+    .filter((label) => label !== 'No income pair')
+    .map((label) => ({ label, value: map.get(label) || 0 }));
+}
+
 /** One row per person: first/last monitor via window functions, then bucket labels. */
 export function placementWindowCte(whereSql) {
   return `
@@ -779,14 +818,7 @@ export async function getPlacementDistributions(filters) {
     let deltaRows = [];
     try {
       deltaRows = await fetchall(
-        `SELECT CASE
-           WHEN ${pre} IS NULL OR ${post} IS NULL THEN 'No income pair'
-           WHEN ${post} - ${pre} < 0 THEN 'Income fell'
-           WHEN ${post} - ${pre} = 0 THEN 'No change'
-           WHEN ${post} - ${pre} <= 2000 THEN '+₹1–2,000'
-           WHEN ${post} - ${pre} <= 5000 THEN '+₹2,001–5,000'
-           ELSE '+₹5,000+'
-         END AS label,
+        `SELECT ${incomeDeltaSql(pre, post)} AS label,
          COUNT(*)::integer AS value
          FROM education_mixprogram m
          ${sw}
@@ -1032,9 +1064,9 @@ export async function getMixprogramSkilling(filters) {
       params
     );
     const byPlacement = await fetchall(
-      `SELECT COALESCE(${displaySql('m.placement_status')}, 'Unknown') AS label, COUNT(*)::integer AS value
+      `SELECT ${placementStatusSql('m.placement_status')} AS label, COUNT(*)::integer AS value
        FROM education_mixprogram m ${w}
-       GROUP BY ${softFoldSql('m.placement_status')} ORDER BY value DESC`,
+       GROUP BY 1 ORDER BY value DESC`,
       params
     );
     const byCategory = await fetchall(
@@ -1056,12 +1088,12 @@ export async function getMixprogramSkilling(filters) {
        ORDER BY n_post DESC, n_pre DESC`,
       params
     );
-    const scatter = await fetchall(
-      `SELECT ${moneySql('m.pre_income')} AS x, ${moneySql('m.post_income')} AS y
-       FROM education_mixprogram m
-       ${w}
-         AND ${moneySql('m.pre_income')} IS NOT NULL
-         AND ${moneySql('m.post_income')} IS NOT NULL`,
+    const pre = moneySql('m.pre_income');
+    const post = moneySql('m.post_income');
+    const incomeChange = await incomeChangeBuckets(
+      pre,
+      post,
+      `${w} AND ${pre} IS NOT NULL AND ${post} IS NOT NULL`,
       params
     );
     const locCourse = await fetchall(
@@ -1094,7 +1126,7 @@ export async function getMixprogramSkilling(filters) {
       by_gender: byGender,
       by_placement: byPlacement,
       by_category: byCategory,
-      scatter: scatter.map((r) => [Number(r.x) || 0, Number(r.y) || 0]),
+      income_change: incomeChange,
       heatmap: { x: courses, y: locations, cells }
     };
   } catch (err) {
@@ -1144,12 +1176,12 @@ export async function getMixprogramDidi(filters) {
        FROM education_mixprogram m ${w} GROUP BY ${foldSql('m.location')} ORDER BY value DESC`,
       params
     );
-    const scatter = await fetchall(
-      `SELECT ${moneySql('m.pre_income_individual')} AS x, ${moneySql('m.post_income_individual')} AS y
-       FROM education_mixprogram m
-       ${w}
-         AND ${moneySql('m.pre_income_individual')} IS NOT NULL
-         AND ${moneySql('m.post_income_individual')} IS NOT NULL`,
+    const preInd = moneySql('m.pre_income_individual');
+    const postInd = moneySql('m.post_income_individual');
+    const incomeChange = await incomeChangeBuckets(
+      preInd,
+      postInd,
+      `${w} AND ${preInd} IS NOT NULL AND ${postInd} IS NOT NULL`,
       params
     );
     const flows = await fetchall(
@@ -1187,7 +1219,7 @@ export async function getMixprogramDidi(filters) {
       by_type: byType,
       by_gender: byGender,
       by_location: mergeSimilarLabels(byLocation),
-      scatter: scatter.map((r) => [Number(r.x) || 0, Number(r.y) || 0]),
+      income_change: incomeChange,
       sankey: { nodes: sankeyNodes, links }
     };
   } catch (err) {

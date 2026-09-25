@@ -9,7 +9,6 @@ import BenchmarkBar from '../../../components/charts/BenchmarkBar';
 import EChart, {
   treemapOption,
   heatmapOption,
-  scatterOption,
   roseOption,
   funnelOption,
   groupedBarOption
@@ -179,15 +178,19 @@ export default function SkillingPage() {
                     <div className="card-body">
                       <EChart
                         option={funnelOption(data.mixSkilling.by_placement)}
+                        caption="Status only. An employer name on the sheet is counted as Working."
                         onPoint={(p) => p.name && handleDrilldown('mix_placement', p.name)}
                       />
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Pre vs post income</h3></div>
+                    <div className="card-header"><h3>Income change, pre to post</h3></div>
                     <div className="card-body">
-                      <EChart
-                        option={scatterOption(data.mixSkilling.scatter, { xName: 'Pre income', yName: 'Post income' })}
+                      <ColumnBar
+                        labels={(data.mixSkilling.income_change || []).map((r) => r.label)}
+                        values={(data.mixSkilling.income_change || []).map((r) => r.value)}
+                        caption="People who have both a pre and a post income."
+                        onBarClick={(label) => handleDrilldown('income_delta', label)}
                       />
                     </div>
                   </div>
