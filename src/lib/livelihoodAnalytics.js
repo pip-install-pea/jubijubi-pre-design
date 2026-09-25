@@ -472,8 +472,7 @@ export async function getMarketAccessStats(filters) {
 export async function getFundingStats(filters) {
   const { clauses, params } = lf(filters, {
     state_col: 'es.state_id',
-    district_col: 'es.district_id',
-    financial_year_col: 'em.financial_year'
+    district_col: 'es.district_id'
   });
   const w = whereStr(clauses);
 

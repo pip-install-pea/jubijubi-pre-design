@@ -459,6 +459,18 @@ function buildDiseaseYoY(thisMix, lastMix, thisYear, lastYear) {
     .slice(0, 12);
 }
 
+async function latestDiseaseYears() {
+  const rows = await safeFetchall(
+    `SELECT year
+     FROM health_disease_summary
+     WHERE year ~ '^[0-9]{4}$'
+     GROUP BY year
+     ORDER BY year DESC
+     LIMIT 2`
+  );
+  return rows.map((row) => String(row.year));
+}
+
 export async function getDepth(filters) {
   const year = calendarYear(filters);
   const years = splitList(year).filter((item) => /^\d{4}$/.test(item));
@@ -510,7 +522,20 @@ export async function getDepth(filters) {
     }
   }
 
-  const diseaseYoY = buildDiseaseYoY(disease.mix, prevDisease.mix, disease.year, String(Number(disease.year) - 1));
+  const diseaseYoYYears = await latestDiseaseYears();
+  const yoyThis = diseaseYoYYears[0] || null;
+  const yoyLast = diseaseYoYYears[1] || null;
+  let yoyThisMix = disease.mix;
+  let yoyLastMix = prevDisease.mix;
+  if (yoyThis && yoyThis !== String(disease.year)) {
+    yoyThisMix = (await fetchPostgresMix(yoyThis)).disease.mix;
+  }
+  if (yoyLast) {
+    yoyLastMix = (await fetchPostgresMix(yoyLast)).disease.mix;
+  }
+  const diseaseYoY = yoyThis && yoyLast
+    ? buildDiseaseYoY(yoyThisMix, yoyLastMix, yoyThis, yoyLast)
+    : [];
 
   let totalAppts = 0;
   let repeatPct = 0;
