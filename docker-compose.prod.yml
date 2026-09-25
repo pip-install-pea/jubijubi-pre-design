@@ -27,8 +27,9 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable
-      DATABASE_SSL: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable}
+      DATABASE_URL_NEON: ${DATABASE_URL_NEON:-}
+      DB_TARGET: ${DB_TARGET:-}
       JWT_SECRET: ${JWT_SECRET}
       SECRET_KEY: ${SECRET_KEY}
       AUTO_SYNC: "false"
@@ -56,8 +57,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable
-      DATABASE_SSL: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://jubilant:${POSTGRES_PASSWORD}@postgres:5432/jubilant?sslmode=disable}
+      DATABASE_URL_NEON: ${DATABASE_URL_NEON:-}
+      DB_TARGET: ${DB_TARGET:-}
       SEED_ADMIN: ${SEED_ADMIN:-}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

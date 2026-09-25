@@ -3,8 +3,11 @@
 DATABASE_URL=postgresql://jubilant:jubilant@localhost:5433/jubilant?sslmode=disable
 # Native / other local Postgres:
 # DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/jubilant?sslmode=disable
-# Neon / cloud (SSL required):
-# DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/dbname?sslmode=require
+# Neon / cloud (SSL required). Keep RDS in DATABASE_URL and switch after deploy:
+# DATABASE_URL_NEON=postgresql://USER:PASSWORD@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
+# DB_TARGET=neon
+# Switch back with DB_TARGET=rds (uses DATABASE_URL, or DATABASE_URL_RDS if set).
+# Leave DB_TARGET unset to use DATABASE_URL only.
 
 # AWS RDS (eu-north-1). URL-encode special characters in the password.
 # Create a jubilant database instead of using the default postgres admin DB:

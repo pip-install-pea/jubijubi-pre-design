@@ -4,7 +4,7 @@
  */
 const { Client } = require('pg');
 const crypto = require('crypto');
-const { clientConfig } = require('../src/lib/pgSsl.cjs');
+const { activeDatabaseUrl, clientConfig } = require('../src/lib/pgSsl.cjs');
 
 function generatePasswordHash(password) {
   const salt = crypto.randomBytes(12)
@@ -18,9 +18,11 @@ function generatePasswordHash(password) {
   return `pbkdf2:sha256:${iterations}$${salt}$${derivedKey.toString('hex')}`;
 }
 
-const url = process.env.DATABASE_URL;
+const url = activeDatabaseUrl();
 if (!url) {
-  console.error('DATABASE_URL is not set.');
+  console.error(process.env.DB_TARGET === 'neon'
+    ? 'DB_TARGET=neon but DATABASE_URL_NEON is not set.'
+    : 'DATABASE_URL is not set.');
   process.exit(1);
 }
 

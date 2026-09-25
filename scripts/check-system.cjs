@@ -3,11 +3,13 @@
  * Usage: node --env-file=.env scripts/check-system.cjs
  */
 const { Client } = require('pg');
-const { clientConfig } = require('../src/lib/pgSsl.cjs');
+const { activeDatabaseUrl, clientConfig } = require('../src/lib/pgSsl.cjs');
 
-const url = process.env.DATABASE_URL;
+const url = activeDatabaseUrl();
 if (!url) {
-  console.error('DATABASE_URL is not set.');
+  console.error(process.env.DB_TARGET === 'neon'
+    ? 'DB_TARGET=neon but DATABASE_URL_NEON is not set.'
+    : 'DATABASE_URL is not set.');
   process.exit(1);
 }
 

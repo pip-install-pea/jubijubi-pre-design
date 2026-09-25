@@ -23,22 +23,30 @@ function resolveCaPath() {
   return null;
 }
 
-function sslConfig(url = process.env.DATABASE_URL || '') {
+function activeDatabaseUrl() {
+  const target = String(process.env.DB_TARGET || '').trim().toLowerCase();
+  if (target === 'neon') return String(process.env.DATABASE_URL_NEON || '').trim();
+  if (target === 'rds') {
+    return String(process.env.DATABASE_URL_RDS || process.env.DATABASE_URL || '').trim();
+  }
+  return String(process.env.DATABASE_URL || '').trim();
+}
+
+function sslConfig(url = activeDatabaseUrl()) {
   const flag = String(process.env.DATABASE_SSL || '').toLowerCase();
   if (flag === 'false' || flag === '0' || flag === 'disable') return false;
+  const isRds = /\.rds\.amazonaws\.com/i.test(url);
   const wantsSsl = flag === 'true' || flag === '1' || flag === 'require'
     || /sslmode=(require|verify-ca|verify-full)/i.test(url)
-    || /\.rds\.amazonaws\.com/i.test(url);
-  if (!wantsSsl) {
-    if (/sslmode=disable/i.test(url) || /localhost|127\.0\.0\.1/i.test(url)) return false;
-    return false;
+    || isRds
+    || /\.neon\.tech/i.test(url);
+  if (!wantsSsl) return false;
+  if (isRds) {
+    const caPath = resolveCaPath();
+    if (caPath) return { rejectUnauthorized: false, ca: fs.readFileSync(caPath, 'utf8') };
+    return { rejectUnauthorized: false };
   }
-  const caPath = resolveCaPath();
-  const isRds = /\.rds\.amazonaws\.com/i.test(url);
-  if (caPath) {
-    return { rejectUnauthorized: !isRds, ca: fs.readFileSync(caPath, 'utf8') };
-  }
-  return { rejectUnauthorized: false };
+  return { rejectUnauthorized: true };
 }
 
 function parseDatabaseUrl(raw) {
@@ -69,8 +77,12 @@ function parseDatabaseUrl(raw) {
 }
 
 export function describeDatabase() {
-  const raw = String(process.env.DATABASE_URL || '').trim();
+  const targetName = String(process.env.DB_TARGET || '').trim().toLowerCase();
+  const raw = activeDatabaseUrl();
   if (!raw) {
+    const missing = targetName === 'neon'
+      ? 'DB_TARGET=neon but DATABASE_URL_NEON is not set.'
+      : 'DATABASE_URL is not set. The app will not guess a Postgres host.';
     return {
       configured: false,
       target: null,
@@ -80,7 +92,7 @@ export function describeDatabase() {
       user: null,
       ssl: false,
       passwordSet: false,
-      reason: 'DATABASE_URL is not set. The app will not guess a Postgres host.'
+      reason: missing
     };
   }
   try {
@@ -127,14 +139,15 @@ function getPool() {
   if (!desc.configured) {
     throw dbNotConfiguredError(desc);
   }
-  const parsed = parseDatabaseUrl(process.env.DATABASE_URL);
+  const rawUrl = activeDatabaseUrl();
+  const parsed = parseDatabaseUrl(rawUrl);
   pool = new Pool({
     host: parsed.host,
     port: Number(parsed.port),
     database: parsed.database || undefined,
     user: parsed.user,
     password: String(parsed.password ?? ''),
-    ssl: sslConfig(process.env.DATABASE_URL),
+    ssl: sslConfig(rawUrl),
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
     max: 8,
