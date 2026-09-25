@@ -133,36 +133,74 @@ function midIso(from, to) {
   return new Date(a + Math.floor((b - a) / 2)).toISOString().slice(0, 10);
 }
 
-/** health.php can 500 on a wide date window; split and retry. */
-async function fetchDatedChunk(endpoint, payload, timeout, maxRetries, depth = 0) {
+function buildDateChunks(fromDate, toDate, chunkDays) {
+  const chunks = [];
+  let currentFrom = new Date(`${fromDate}T00:00:00Z`);
+  const targetTo = new Date(`${toDate}T00:00:00Z`);
+  const size = Math.max(1, Number(chunkDays) || 10);
+  while (currentFrom <= targetTo) {
+    const currentTo = new Date(currentFrom);
+    currentTo.setUTCDate(currentTo.getUTCDate() + (size - 1));
+    if (currentTo > targetTo) currentTo.setTime(targetTo.getTime());
+    chunks.push({
+      from: currentFrom.toISOString().slice(0, 10),
+      to: currentTo.toISOString().slice(0, 10)
+    });
+    currentFrom = new Date(currentTo);
+    currentFrom.setUTCDate(currentFrom.getUTCDate() + 1);
+  }
+  return chunks;
+}
+
+async function loadSyncProgress(tableName) {
   try {
-    return await fetchWithRetry(endpoint, payload, timeout, maxRetries);
+    const res = await pool.query(
+      `SELECT last_to_date FROM sync_progress WHERE table_name = $1`,
+      [tableName]
+    );
+    return res.rows[0]?.last_to_date || null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveSyncProgress(tableName, lastToDate) {
+  await pool.query(
+    `INSERT INTO sync_progress (table_name, last_to_date, updated_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (table_name)
+     DO UPDATE SET last_to_date = EXCLUDED.last_to_date, updated_at = EXCLUDED.updated_at`,
+    [tableName, lastToDate, new Date().toISOString()]
+  );
+}
+
+/** Fetch one date window, upsert immediately. On PHP 500, split the window and upsert each half. */
+async function ingestDatedWindow(plan, from, to, timeout, maxRetries, depth = 0) {
+  try {
+    const records = await fetchWithRetry(
+      plan.endpoint,
+      { ...plan.payload, from_date: from, to_date: to },
+      timeout,
+      maxRetries
+    );
+    if (!records?.length) return { fetched: 0, upserted: 0 };
+    const upserted = await ingestRecords(plan, records, timeout, maxRetries);
+    return { fetched: records.length, upserted };
   } catch (err) {
-    const from = payload.from_date;
-    const to = payload.to_date;
-    if (err.response?.status === 500 && from && to && depth < 2 && from < to) {
+    if (err.response?.status === 500 && from && to && depth < 3 && from < to) {
       let mid = midIso(from, to);
       if (mid >= to) mid = addDaysIso(to, -1);
       if (mid < from) mid = from;
-      console.warn(`[syncEngine] HTTP 500 on ${endpoint} ${from}..${to}; splitting at ${mid}`);
-      const first = await fetchDatedChunk(
-        endpoint,
-        { ...payload, from_date: from, to_date: mid },
-        timeout,
-        maxRetries,
-        depth + 1
-      );
+      console.warn(`[syncEngine] HTTP 500 on ${plan.endpoint} ${from}..${to}; split at ${mid} and upsert each half`);
+      const first = await ingestDatedWindow(plan, from, mid, timeout, maxRetries, depth + 1);
       const nextFrom = addDaysIso(mid, 1);
       const second = nextFrom <= to
-        ? await fetchDatedChunk(
-          endpoint,
-          { ...payload, from_date: nextFrom, to_date: to },
-          timeout,
-          maxRetries,
-          depth + 1
-        )
-        : [];
-      return [...(first || []), ...(second || [])];
+        ? await ingestDatedWindow(plan, nextFrom, to, timeout, maxRetries, depth + 1)
+        : { fetched: 0, upserted: 0 };
+      return {
+        fetched: first.fetched + second.fetched,
+        upserted: first.upserted + second.upserted
+      };
     }
     throw err;
   }
@@ -195,6 +233,13 @@ async function ensureColumn(table, column, type = 'TEXT') {
 }
 
 export async function ensureEnvelopeTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sync_progress (
+      table_name TEXT PRIMARY KEY,
+      last_to_date TEXT,
+      updated_at TEXT
+    )
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS health_beneficiary_year (
       year TEXT PRIMARY KEY,
@@ -1232,52 +1277,50 @@ export async function syncModule(moduleName, forceFull = false) {
       if (plan.useDateRange && plan.dateColumn) {
         let fromDate = HEALTH_SYNC_START;
         if (!forceFull) {
-          try {
-            const maxDateRes = await pool.query(`SELECT MAX("${plan.dateColumn}") AS max_date FROM "${plan.table}"`);
-            const maxDate = maxDateRes.rows[0]?.max_date;
-            if (maxDate) {
-              const d = new Date(maxDate);
-              if (!Number.isNaN(d.getTime()) && d.getFullYear() > 1971) {
-                d.setDate(d.getDate() - 1);
-                fromDate = d.toISOString().split('T')[0];
+          const progressTo = await loadSyncProgress(plan.table);
+          if (progressTo && progressTo > fromDate) {
+            fromDate = addDaysIso(progressTo, 1);
+          } else {
+            try {
+              const maxDateRes = await pool.query(`SELECT MAX("${plan.dateColumn}") AS max_date FROM "${plan.table}"`);
+              const maxDate = maxDateRes.rows[0]?.max_date;
+              if (maxDate) {
+                const d = new Date(maxDate);
+                if (!Number.isNaN(d.getTime()) && d.getFullYear() > 1971) {
+                  d.setDate(d.getDate() - 1);
+                  const fromMax = d.toISOString().split('T')[0];
+                  if (fromMax > fromDate) fromDate = fromMax;
+                }
               }
+            } catch (dbErr) {
+              console.warn(`[syncEngine] Failed to query max date for table ${plan.table}, falling back to ${HEALTH_SYNC_START}:`, dbErr.message || dbErr);
             }
-          } catch (dbErr) {
-            console.warn(`[syncEngine] Failed to query max date for table ${plan.table}, falling back to ${HEALTH_SYNC_START}:`, dbErr.message || dbErr);
           }
         }
         const toDate = new Date().toISOString().split('T')[0];
         const chunkSize = plan.chunkSizeDays || 10;
-        const chunks = [];
-        let currentFrom = new Date(fromDate);
-        const targetTo = new Date(toDate);
-        while (currentFrom <= targetTo) {
-          let currentTo = new Date(currentFrom);
-          currentTo.setDate(currentTo.getDate() + (chunkSize - 1));
-          if (currentTo > targetTo) {
-            currentTo = new Date(targetTo);
+        const chunks = fromDate <= toDate ? buildDateChunks(fromDate, toDate, chunkSize) : [];
+
+        console.log(`[syncEngine] Table ${plan.table} fetching ${chunks.length} window(s) ${fromDate}..${toDate}, upsert after each`);
+
+        let chunkErrors = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          try {
+            const result = await ingestDatedWindow(plan, chunk.from, chunk.to, timeout, maxRetries);
+            totalFetched += result.fetched;
+            totalUpserted += result.upserted;
+            await saveSyncProgress(plan.table, chunk.to);
+            if ((i + 1) % 20 === 0 || i === chunks.length - 1) {
+              console.log(`[syncEngine] ${plan.table} ${i + 1}/${chunks.length} through ${chunk.to} fetched=${totalFetched} upserted=${totalUpserted}`);
+            }
+          } catch (chunkErr) {
+            chunkErrors += 1;
+            console.warn(`[syncEngine] ${plan.table} window ${chunk.from}..${chunk.to} failed: ${chunkErr.message || chunkErr}`);
           }
-          chunks.push({
-            from: currentFrom.toISOString().split('T')[0],
-            to: currentTo.toISOString().split('T')[0]
-          });
-          currentFrom = new Date(currentTo);
-          currentFrom.setDate(currentFrom.getDate() + 1);
         }
-
-        console.log(`[syncEngine] Table ${plan.table} is using incremental syncing with ${chunks.length} chunks from ${fromDate} to ${toDate}`);
-
-        for (const chunk of chunks) {
-          const chunkPayload = {
-            ...plan.payload,
-            from_date: chunk.from,
-            to_date: chunk.to
-          };
-          let chunkRecords = await fetchDatedChunk(plan.endpoint, chunkPayload, timeout, maxRetries);
-          if (chunkRecords && chunkRecords.length > 0) {
-            totalFetched += chunkRecords.length;
-            totalUpserted += await ingestRecords(plan, chunkRecords);
-          }
+        if (chunkErrors) {
+          throw new Error(`${chunkErrors} date window(s) failed; later runs resume from sync_progress`);
         }
       } else if (plan.chainFromDiseaseSummary) {
         const maxIds = Number(process.env.DISEASE_PATIENT_MAX_IDS) || 12;

@@ -136,7 +136,15 @@ function getPool() {
     password: String(parsed.password ?? ''),
     ssl: sslConfig(process.env.DATABASE_URL),
     keepAlive: true,
-    max: 8
+    keepAliveInitialDelayMillis: 10_000,
+    max: 8,
+    // Handshake only. A running query is not cut off by this.
+    connectionTimeoutMillis: 20_000,
+    idleTimeoutMillis: 5 * 60_000
+  });
+  pool.on('error', (err) => {
+    console.warn(`[db] idle connection dropped: ${err.code || err.message}`);
+    resetPool();
   });
   if (!loggedTarget) {
     console.log(
@@ -162,15 +170,15 @@ function isRetryableConnect(err) {
 
 export async function query(text, params) {
   let last;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await getPool().query(text, params);
     } catch (err) {
       last = err;
-      if (!isRetryableConnect(err) || attempt === 4) throw err;
-      console.warn(`[db] ${err.code || err.message} — reconnect ${attempt + 1}/5`);
+      if (!isRetryableConnect(err) || attempt === 2) throw err;
+      console.warn(`[db] ${err.code || err.message} — reconnect ${attempt + 1}/3`);
       resetPool();
-      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
     }
   }
   throw last;
@@ -206,7 +214,7 @@ export async function fetchall(sql, params = {}) {
     return match;
   });
 
-  const res = await getPool().query(convertedSql, values);
+  const res = await query(convertedSql, values);
   return res.rows;
 }
 

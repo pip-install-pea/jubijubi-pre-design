@@ -1,5 +1,5 @@
 import { fetchall, scalar } from './db.js';
-import { buildFilters, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { bindIn, buildFilters, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
 import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
 import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 
@@ -16,10 +16,8 @@ function mixYearClauses(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
   const clauses = [MIX_CANONICAL_ROW];
-  if (year) {
-    clauses.push('m.year = :year');
-    params.year = year;
-  }
+  const yearClause = bindIn('m.year', year, 'year', params);
+  if (yearClause) clauses.push(yearClause);
   return { clauses, params };
 }
 
@@ -556,12 +554,23 @@ export async function getLivelihoodGeoBenchmarks(filters) {
     ...GEO
   };
   const joinSelect = grain === 'district'
-    ? `COALESCE(NULLIF(TRIM(d.district_name), ''), sp.district_id::text, 'Unknown') AS label, sp.district_id::text AS id`
-    : `COALESCE(NULLIF(TRIM(s.state_name), ''), sp.state_id::text, 'Unknown') AS label, sp.state_id::text AS id`;
-  const joinSql = grain === 'district'
-    ? `LEFT JOIN skilltracking_district d ON d.district_id::text = sp.district_id::text`
-    : `LEFT JOIN skilltracking_state s ON s.state_id::text = sp.state_id::text`;
-  const groupSql = grain === 'district' ? `GROUP BY d.district_name, sp.district_id` : `GROUP BY s.state_name, sp.state_id`;
+    ? `COALESCE(
+         (SELECT NULLIF(TRIM(d.district_name), '') FROM skilltracking_district d
+          WHERE d.district_id::text = sp.district_id::text
+            AND d.state_id::text = sp.state_id::text
+          ORDER BY d.district_name LIMIT 1),
+         sp.district_id::text, 'Unknown') AS label,
+       sp.district_id::text AS id`
+    : `COALESCE(
+         (SELECT NULLIF(TRIM(s.state_name), '') FROM skilltracking_state s
+          WHERE s.state_id::text = sp.state_id::text
+          ORDER BY s.state_name LIMIT 1),
+         sp.state_id::text, 'Unknown') AS label,
+       sp.state_id::text AS id`;
+  const joinSql = '';
+  const groupSql = grain === 'district'
+    ? `GROUP BY sp.state_id, sp.district_id`
+    : `GROUP BY sp.state_id`;
 
   const run = async (f, limit) => {
     const { clauses, params } = lf(f, opts);
@@ -881,10 +890,8 @@ export async function getMixprogramFarmers(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
   const yearClauses = [MIX_CANONICAL_ROW];
-  if (year) {
-    yearClauses.push('m.year = :year');
-    params.year = year;
-  }
+  const yearClause = bindIn('m.year', year, 'year', params);
+  if (yearClause) yearClauses.push(yearClause);
   const farmerWhere = whereStr([...yearClauses, `m.program_id::text IN ('1','2')`]);
   const otherWhere = whereStr([
     ...yearClauses,

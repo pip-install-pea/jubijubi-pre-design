@@ -6,7 +6,7 @@ import { getReach, getDepth } from '@/lib/healthAnalytics.js';
 import { buildJob } from '@/lib/phpRegistry.js';
 import { postPhpEnvelope, sanitiseRow } from '@/lib/phpClient.js';
 import { addColFilters, filterRows, parseColFilters } from '@/lib/drilldownFilters.js';
-import { HEALTH_GEO_JOIN, HEALTH_DISTRICT, HEALTH_STATE } from '@/lib/geoLookups.js';
+import { HEALTH_GEO_JOIN, HEALTH_DISTRICT, HEALTH_STATE, resolveGeoId } from '@/lib/geoLookups.js';
 
 const LIVE_PAGE = 20;
 const PATIENT_LIST_COLS = [
@@ -293,7 +293,11 @@ export async function GET(req) {
     } else if (drill_type === 'community') {
       const { clauses, params } = buildFilters(filters, {
         date_col: 'health_profile_patients.created_at',
-        partner_col: 'health_profile_patients.partner_id'
+        partner_col: 'health_profile_patients.partner_id',
+        state_col: 'health_profile_patients.state_id',
+        district_col: 'health_profile_patients.district_id',
+        gender_col: 'health_profile_patients.gender',
+        module: 'health'
       });
       if (value === 'Unknown') {
         clauses.push("(caste_id IS NULL OR caste_id = '')");
@@ -318,7 +322,7 @@ export async function GET(req) {
       const w = whereStr(clauses);
 
       total = await scalar(
-        `SELECT COUNT(*)::integer FROM health_profile_patients ${w}`,
+        `SELECT COUNT(*)::integer FROM health_profile_patients ${HEALTH_GEO_JOIN} ${w}`,
         params
       );
 
@@ -349,7 +353,13 @@ export async function GET(req) {
 
     } else if (drill_type === 'geo') {
       const grain = url.searchParams.get('grain') || 'state';
-      const geoId = url.searchParams.get('geo_id') || value;
+      const geoId = await resolveGeoId({
+        module: 'health',
+        grain,
+        geoId: url.searchParams.get('geo_id') || value,
+        label: value,
+        stateId: filters.state_id
+      });
       const scoped = {
         ...filters,
         ...(grain === 'district'
@@ -379,7 +389,7 @@ export async function GET(req) {
       });
       const w = whereStr(clauses);
 
-      total = await scalar(`SELECT COUNT(*)::integer FROM health_profile_patients ${w}`, params);
+      total = await scalar(`SELECT COUNT(*)::integer FROM health_profile_patients ${HEALTH_GEO_JOIN} ${w}`, params);
       rows = await fetchall(
         `SELECT patient_id, full_name, gender, age,
                 ${HEALTH_STATE} AS state, ${HEALTH_DISTRICT} AS district, created_at

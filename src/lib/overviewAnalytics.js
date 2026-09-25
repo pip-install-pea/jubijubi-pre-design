@@ -1,5 +1,5 @@
 import { fetchall, scalar } from './db.js';
-import { buildFilters, whereStr } from './analytics.js';
+import { bindIn, buildFilters, whereStr } from './analytics.js';
 import { getMixprogramSchools, MIX_CANONICAL_ROW } from './educationAnalytics.js';
 import { fetchFarmerYearSeries } from './livelihoodAnalytics.js';
 
@@ -28,9 +28,10 @@ async function safeRows(sql, params) {
 export async function getOverview(filters, user) {
   const yearOnly = { year: filters?.year, quarter: filters?.quarter, geo_module: 'overview' };
   const mixYear = filters?.academic_year || filters?.financial_year;
-  const mixParams = mixYear ? { year: mixYear } : {};
-  const mixWhere = mixYear
-    ? `WHERE m.year = :year AND ${MIX_CANONICAL_ROW}`
+  const mixParams = {};
+  const mixYearClause = bindIn('m.year', mixYear, 'year', mixParams);
+  const mixWhere = mixYearClause
+    ? `WHERE ${mixYearClause} AND ${MIX_CANONICAL_ROW}`
     : `WHERE ${MIX_CANONICAL_ROW}`;
 
   const result = {
@@ -58,16 +59,17 @@ export async function getOverview(filters, user) {
       `SELECT COUNT(*)::integer FROM health_profile_patients ${whereStr(hf.clauses)}`,
       hf.params
     );
-    const diseaseWhere = filters?.year ? 'WHERE year = :year' : '';
+    const diseaseParams = {};
+    const diseaseClause = bindIn('year', filters?.year, 'dy', diseaseParams);
     result.health_diseases = await safeRows(
       `SELECT COALESCE(NULLIF(TRIM(disease_name), ''), 'Unknown') AS label,
               COALESCE(SUM(total_patients), 0)::integer AS value
        FROM health_disease_summary
-       ${diseaseWhere}
+       ${diseaseClause ? `WHERE ${diseaseClause}` : ''}
        GROUP BY 1
        ORDER BY 2 DESC
        LIMIT 12`,
-      filters?.year ? { year: filters.year } : {}
+      diseaseParams
     );
   }
 

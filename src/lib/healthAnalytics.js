@@ -1,5 +1,5 @@
 import { fetchall, scalar, isDatabaseConfigured } from './db.js';
-import { buildFilters, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { bindIn, buildFilters, splitList, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
 import { postPhpEnvelope } from './phpClient.js';
 import { API_BASE, DEFAULT_YEAR, SYMPTOM_PATHS } from './phpRegistry.js';
 
@@ -135,45 +135,58 @@ async function persistSymptomMix(year, mix) {
 
 async function fetchPostgresEnvelope(year) {
   if (!isDatabaseConfigured()) return null;
+  const years = splitList(year).filter((item) => /^\d{4}$/.test(item));
+  if (!years.length) return null;
+  const params = {};
+  const clause = bindIn('year', years, 'yr', params);
   const rows = await safeFetchall(
     `SELECT year, total_beneficiary, total_village, total_state, total_adolescent_10_19
      FROM health_beneficiary_year
-     WHERE year = :year`,
-    { year: String(year) }
+     WHERE ${clause}`,
+    params
   );
-  const row = rows[0];
-  if (!row) return null;
+  if (!rows.length) return null;
+  const summed = rows.reduce((acc, row) => ({
+    total_beneficiary: acc.total_beneficiary + num(row.total_beneficiary),
+    total_village: acc.total_village + num(row.total_village),
+    total_state: Math.max(acc.total_state, num(row.total_state)),
+    total_adolescent_10_19: acc.total_adolescent_10_19 + num(row.total_adolescent_10_19)
+  }), { total_beneficiary: 0, total_village: 0, total_state: 0, total_adolescent_10_19: 0 });
   return {
-    year: String(row.year),
-    total_beneficiary: num(row.total_beneficiary),
-    total_village: num(row.total_village),
-    total_state: num(row.total_state),
-    total_adolescent_10_19: num(row.total_adolescent_10_19)
+    year: years.join(', '),
+    ...summed
   };
 }
 
 async function fetchPostgresMix(year) {
+  const years = splitList(year).filter((item) => /^\d{4}$/.test(item));
+  const params = {};
+  const clause = years.length ? bindIn('year', years, 'yr', params) : null;
+  const yearSql = clause ? `WHERE ${clause}` : '';
+  const label = years.join(', ') || String(year);
   const diseaseMix = await safeFetchall(
     `SELECT COALESCE(disease_name, 'Unknown') AS disease,
-            COALESCE(total_patients, 0)::integer AS patients,
-            disease_id
+            COALESCE(SUM(total_patients), 0)::integer AS patients,
+            MIN(disease_id) AS disease_id
      FROM health_disease_summary
-     WHERE year = :year
+     ${yearSql}
+     GROUP BY COALESCE(disease_name, 'Unknown')
      ORDER BY patients DESC`,
-    { year: String(year) }
+    params
   );
   const symptomMix = await safeFetchall(
     `SELECT COALESCE(symptom_name, 'Unknown') AS symptom,
-            COALESCE(total_patients, 0)::integer AS patients,
-            symptom_id
+            COALESCE(SUM(total_patients), 0)::integer AS patients,
+            MIN(symptom_id) AS symptom_id
      FROM health_symptom_summary
-     WHERE year = :year
+     ${yearSql}
+     GROUP BY COALESCE(symptom_name, 'Unknown')
      ORDER BY patients DESC`,
-    { year: String(year) }
+    params
   );
   return {
-    disease: { year: String(year), total_diseases: diseaseMix.length, mix: mapDiseaseRows(diseaseMix) },
-    symptoms: { year: String(year), total_symptoms: symptomMix.length, mix: mapSymptomRows(symptomMix) }
+    disease: { year: label, total_diseases: diseaseMix.length, mix: mapDiseaseRows(diseaseMix) },
+    symptoms: { year: label, total_symptoms: symptomMix.length, mix: mapSymptomRows(symptomMix) }
   };
 }
 
@@ -233,7 +246,8 @@ function num(value) {
 }
 
 function calendarYear(filters) {
-  return String(filters?.year || DEFAULT_YEAR);
+  const years = splitList(filters?.year).filter((item) => /^\d{4}$/.test(item));
+  return years.length ? years.join(',') : String(DEFAULT_YEAR);
 }
 
 function mapDiseaseRows(rows) {
@@ -344,10 +358,11 @@ async function safeScalar(query, params) {
 
 export async function getReach(filters) {
   const year = calendarYear(filters);
+  const years = splitList(year).filter((item) => /^\d{4}$/.test(item));
 
   const trend = await fetchBeneficiaryTrend();
   let envelope = await fetchPostgresEnvelope(year);
-  if ((!envelope || !envelope.total_beneficiary) && trend.length) {
+  if ((!envelope || !envelope.total_beneficiary) && years.length === 1 && trend.length) {
     envelope = trend.find((r) => r.year === String(year) && r.total_beneficiary > 0)
       || [...trend].reverse().find((r) => r.total_beneficiary > 0)
       || null;
@@ -366,6 +381,7 @@ export async function getReach(filters) {
     return reachPayload(envelope, trend);
   }
 
+  if (years.length === 1) {
   try {
     const live = await fetchEnvelopeWithFallback(year);
     await persistEnvelope(live);
@@ -383,6 +399,7 @@ export async function getReach(filters) {
     );
   } catch (err) {
     console.warn('[healthAnalytics] live beneficiary failed:', err.message);
+  }
   }
 
   if (!isDatabaseConfigured()) {
@@ -444,7 +461,9 @@ function buildDiseaseYoY(thisMix, lastMix, thisYear, lastYear) {
 
 export async function getDepth(filters) {
   const year = calendarYear(filters);
-  const prevYear = String(Number(year) - 1);
+  const years = splitList(year).filter((item) => /^\d{4}$/.test(item));
+  const singleYear = years.length === 1 ? years[0] : null;
+  const prevYear = singleYear ? String(Number(singleYear) - 1) : null;
 
   let disease = { year, total_diseases: 0, mix: [] };
   let symptoms = { year, total_symptoms: 0, mix: [] };
@@ -454,14 +473,14 @@ export async function getDepth(filters) {
     const fromDb = await fetchPostgresMix(year);
     disease = fromDb.disease;
     symptoms = fromDb.symptoms;
-    prevDisease = (await fetchPostgresMix(prevYear)).disease;
+    if (prevYear) prevDisease = (await fetchPostgresMix(prevYear)).disease;
   }
 
-  if (!disease.mix.length) {
+  if (!disease.mix.length && singleYear) {
     try {
       const [thisD, thisS] = await Promise.all([
-        fetchLiveDisease(year),
-        fetchLiveSymptoms(year).catch((err) => {
+        fetchLiveDisease(singleYear),
+        fetchLiveSymptoms(singleYear).catch((err) => {
           console.warn('[healthAnalytics] live symptoms failed:', err.message);
           return { year, total_symptoms: 0, mix: [] };
         })
@@ -647,16 +666,23 @@ export async function getHealthGeoBenchmarks(filters) {
   };
 
   const joinSelect = grain === 'district'
-    ? `COALESCE(NULLIF(TRIM(d.name), ''), p.district_id::text, 'Unknown') AS label,
+    ? `COALESCE(
+         (SELECT NULLIF(TRIM(d.name), '') FROM health_district d
+          WHERE d.source_id::text = p.district_id::text
+            AND d.state_id::text = p.state_id::text
+          ORDER BY d.name LIMIT 1),
+         p.district_id::text, 'Unknown') AS label,
        p.district_id::text AS id`
-    : `COALESCE(NULLIF(TRIM(s.name), ''), p.state_id::text, 'Unknown') AS label,
+    : `COALESCE(
+         (SELECT NULLIF(TRIM(s.name), '') FROM health_state s
+          WHERE s.source_id::text = p.state_id::text
+          ORDER BY s.name LIMIT 1),
+         p.state_id::text, 'Unknown') AS label,
        p.state_id::text AS id`;
-  const joinSql = grain === 'district'
-    ? `LEFT JOIN health_district d ON d.source_id::text = p.district_id::text`
-    : `LEFT JOIN health_state s ON s.source_id::text = p.state_id::text`;
+  const joinSql = '';
   const groupSql = grain === 'district'
-    ? `GROUP BY d.name, p.district_id`
-    : `GROUP BY s.name, p.state_id`;
+    ? `GROUP BY p.state_id, p.district_id`
+    : `GROUP BY p.state_id`;
 
   const run = async (f, limit) => {
     const { clauses, params } = buildFilters(f, opts);

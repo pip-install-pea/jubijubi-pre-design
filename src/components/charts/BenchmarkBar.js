@@ -37,6 +37,7 @@ export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
     }
 
     const base = groupedBarOption(labels, [{ label: grainLabel, data: values }], { horizontal: true });
+    const yAxis = Array.isArray(base.yAxis) ? base.yAxis[0] : base.yAxis;
     return {
       ...base,
       tooltip: {
@@ -45,8 +46,9 @@ export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
         renderMode: 'richText',
         formatter: (items) => {
           const item = Array.isArray(items) ? items[0] : items;
-          const row = rows[item?.dataIndex] || {};
-          const v = Number(item?.value) || 0;
+          const named = rows.find((r) => String(r.label) === String(item?.name));
+          const row = named || rows[item?.dataIndex] || {};
+          const v = Number(row.value ?? item?.value) || 0;
           const bits = [`${item?.name || ''}`, `${v.toLocaleString('en-IN')} ${unit}`];
           if (row.vs_programme_pct != null) {
             bits.push(`${row.vs_programme_pct > 0 ? '+' : ''}${row.vs_programme_pct}% vs programme mean`);
@@ -57,13 +59,18 @@ export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
           return bits.join('\n');
         }
       },
+      yAxis: { ...yAxis, inverse: true },
       series: [{
         type: 'bar',
         name: grainLabel,
         emphasis: { focus: 'series' },
-        data: values.map((v) => ({
-          value: v,
-          itemStyle: { color: progAvg > 0 && v >= progAvg ? LIME : NAVY }
+        data: rows.map((row) => ({
+          value: Number(row.value) || 0,
+          name: row.label,
+          geoId: row.id,
+          itemStyle: {
+            color: progAvg > 0 && Number(row.value) >= progAvg ? LIME : NAVY
+          }
         })),
         markLine: markLineData.length ? { symbol: 'none', data: markLineData } : undefined
       }]
@@ -80,7 +87,17 @@ export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
         height={Math.max(280, labels.length * 28)}
         caption={caption}
         onPoint={onBarClick
-          ? (p) => onBarClick(p.name, rows[p.dataIndex], p.dataIndex)
+          ? (p) => {
+            if (p.componentType && p.componentType !== 'series') return;
+            if (p.seriesType && p.seriesType !== 'bar') return;
+            const named = rows.find((row) => String(row.label) === String(p.name));
+            const embedded = p.data?.geoId != null
+              ? rows.find((row) => String(row.id) === String(p.data.geoId))
+              : null;
+            const row = named || embedded || rows[p.dataIndex];
+            if (!row) return;
+            onBarClick(row.label, row, p.dataIndex);
+          }
           : undefined}
       />
     </div>

@@ -753,7 +753,8 @@ img {
 .filter-bar select,
 .filter-controls select,
 .filter-select,
-.topbar-filters select {
+.topbar-filters select,
+.multi-select__btn {
   width: 100%;
   height: 36px;
   background-color: var(--surface);
@@ -774,8 +775,65 @@ img {
 
 .filter-bar select:focus,
 .filter-controls select:focus,
-.filter-select:focus {
+.filter-select:focus,
+.multi-select__btn:focus {
   border-color: var(--accent);
+}
+
+.multi-select {
+  position: relative;
+  min-width: 148px;
+}
+
+.multi-select__btn {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.multi-select__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.multi-select__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-height: 280px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.multi-select__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.multi-select__option:hover {
+  background: var(--surface2);
+}
+
+.multi-select__option input {
+  margin: 0;
+}
+
+.multi-select__empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .topbar-title {

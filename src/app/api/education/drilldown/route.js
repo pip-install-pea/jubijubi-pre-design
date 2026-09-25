@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
-import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
+import { getFiltersFromRequest, bindIn, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
-import { SKILL_EDU_GEO_JOIN, EDU_DISTRICT, EDU_STATE } from '@/lib/geoLookups.js';
+import { SKILL_EDU_GEO_JOIN, EDU_DISTRICT, EDU_STATE, resolveGeoId } from '@/lib/geoLookups.js';
 
 const F_EDU_PROGRAM = {
   program_id: 'program_id',
@@ -190,24 +190,24 @@ export async function GET(req) {
       const clauses = [];
       const params = {};
       const year = filters.academic_year || filters.financial_year;
-      if (year) {
-        clauses.push('financial_year = :kkp_year');
-        params.kkp_year = year;
-      }
+      const yearClause = bindIn('financial_year', year, 'kkp_year', params);
+      if (yearClause) clauses.push(yearClause);
       if (value) {
         clauses.push('value_name = :drill_value');
         params.drill_value = value;
       }
       try {
         if (filters.state_id) {
+          const stateParams = {};
+          const stateClause = bindIn('state_id::text', filters.state_id, 'sid', stateParams);
           const states = await fetchall(
-            `SELECT state_name FROM skilltracking_state WHERE state_id::text = :sid LIMIT 1`,
-            { sid: String(filters.state_id) }
+            `SELECT state_name FROM skilltracking_state WHERE ${stateClause}`,
+            stateParams
           );
-          if (states[0]?.state_name) {
-            clauses.push('LOWER(TRIM(location_name)) = LOWER(TRIM(:loc))');
-            params.loc = states[0].state_name;
-          }
+          const names = states.map((row) => String(row.state_name || '').trim().toLowerCase()).filter(Boolean);
+          const locClause = bindIn('LOWER(TRIM(location_name))', names, 'loc', params);
+          if (locClause) clauses.push(locClause);
+          else clauses.push('FALSE');
         }
         if (q) {
           clauses.push('(location_name ILIKE :q OR value_name ILIKE :q)');
@@ -276,7 +276,13 @@ export async function GET(req) {
 
     } else if (drillType === 'geo') {
       const grain = searchParams.get('grain') || 'state';
-      const geoId = searchParams.get('geo_id') || value;
+      const geoId = await resolveGeoId({
+        module: 'education',
+        grain,
+        geoId: searchParams.get('geo_id') || value,
+        label: value,
+        stateId: filters.state_id
+      });
       const scoped = {
         ...filters,
         ...(grain === 'district'

@@ -1,7 +1,28 @@
 /**
  * Replicates the legacy Flask app's analytics filter builder in JS.
  * Location IDs are module-scoped: health state_id=1 ≠ livelihood state_id=1.
+ * Filter values may be one id or a comma-separated list.
  */
+
+export function splitList(value) {
+  if (Array.isArray(value)) return value.flatMap((item) => splitList(item));
+  if (value == null) return [];
+  return String(value).split(',').map((part) => part.trim()).filter(Boolean);
+}
+
+/** Equality for one value, IN for several. Returns null when the list is empty. */
+export function bindIn(column, value, prefix, params) {
+  const list = splitList(value);
+  if (!list.length) return null;
+  if (list.length === 1) {
+    params[prefix] = list[0];
+    return `${column} = :${prefix}`;
+  }
+  list.forEach((item, index) => {
+    params[`${prefix}_${index}`] = item;
+  });
+  return `${column} IN (${list.map((_, index) => `:${prefix}_${index}`).join(', ')})`;
+}
 
 export function buildFilters(filters, options = {}) {
   const {
@@ -36,42 +57,17 @@ export function buildFilters(filters, options = {}) {
   const financial_yr = filters?.financial_year;
   const school_id = filters?.school_id;
 
-  if (geoMatches && state_id && state_col) {
-    clauses.push(`${state_col} = :state_id`);
-    params.state_id = state_id;
-  }
-  if (geoMatches && district_id && district_col) {
-    clauses.push(`${district_col} = :district_id`);
-    params.district_id = district_id;
-  }
-  if (partner_id && partner_col) {
-    clauses.push(`${partner_col} = :partner_id`);
-    params.partner_id = partner_id;
-  }
-  if (gender && gender_col) {
-    clauses.push(`${gender_col} = :gender`);
-    params.gender = gender;
-  }
-  if (trade && trade_col) {
-    clauses.push(`${trade_col} = :trade`);
-    params.trade = trade;
-  }
-  if (school_id && school_col) {
-    clauses.push(`${school_col} = :school_id`);
-    params.school_id = school_id;
-  }
-  if (academic_yr && academic_year_col) {
-    clauses.push(`${academic_year_col} = :academic_year`);
-    params.academic_year = academic_yr;
-  }
-  if (financial_yr && financial_year_col) {
-    clauses.push(`${financial_year_col} = :financial_year`);
-    params.financial_year = financial_yr;
-  }
-
-  if (date_col && year) {
-    clauses.push(`SUBSTR(${date_col}::text, 1, 4) = :year`);
-    params.year = year;
+  const stateClause = geoMatches && state_col ? bindIn(state_col, state_id, 'state_id', params) : null;
+  const districtClause = geoMatches && district_col ? bindIn(district_col, district_id, 'district_id', params) : null;
+  const partnerClause = partner_col ? bindIn(partner_col, partner_id, 'partner_id', params) : null;
+  const genderClause = gender_col ? bindIn(gender_col, gender, 'gender', params) : null;
+  const tradeClause = trade_col ? bindIn(trade_col, trade, 'trade', params) : null;
+  const schoolClause = school_col ? bindIn(school_col, school_id, 'school_id', params) : null;
+  const academicClause = academic_year_col ? bindIn(academic_year_col, academic_yr, 'academic_year', params) : null;
+  const financialClause = financial_year_col ? bindIn(financial_year_col, financial_yr, 'financial_year', params) : null;
+  const yearClause = date_col ? bindIn(`SUBSTR(${date_col}::text, 1, 4)`, year, 'year', params) : null;
+  for (const clause of [stateClause, districtClause, partnerClause, genderClause, tradeClause, schoolClause, academicClause, financialClause, yearClause]) {
+    if (clause) clauses.push(clause);
   }
   if (date_col && quarter) {
     const quarter_map = {

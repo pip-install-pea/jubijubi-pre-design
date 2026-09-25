@@ -1,5 +1,5 @@
 import { fetchall, scalar } from './db.js';
-import { buildFilters, whereStr, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { bindIn, buildFilters, splitList, whereStr, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
 import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 
 const GEO = { module: 'education' };
@@ -115,17 +115,18 @@ export async function getPrePostValues(filters) {
   const year = filters?.academic_year || filters?.financial_year || null;
   const kkpClauses = [];
   const kkpParams = {};
-  if (year) {
-    kkpClauses.push('financial_year = :kkp_year');
-    kkpParams.kkp_year = year;
-  }
-  if (filters?.state_id) {
+  const yearClause = bindIn('financial_year', year, 'kkp_year', kkpParams);
+  if (yearClause) kkpClauses.push(yearClause);
+  const stateIds = splitList(filters?.state_id);
+  if (stateIds.length) {
+    const stateParams = {};
+    const stateClause = bindIn('state_id::text', stateIds, 'sid', stateParams);
     const states = await safeFetchall(
-      `SELECT state_name FROM skilltracking_state WHERE state_id::text = :sid LIMIT 1`,
-      { sid: String(filters.state_id) }
+      `SELECT state_name FROM skilltracking_state WHERE ${stateClause}`,
+      stateParams
     );
-    const stateName = states[0]?.state_name;
-    if (!stateName) {
+    const stateNames = states.map((row) => row.state_name).filter(Boolean);
+    if (!stateNames.length) {
       return {
         status: 'no_data',
         source: 'skilltracking_kkp_pre_and_post',
@@ -133,8 +134,8 @@ export async function getPrePostValues(filters) {
         data: []
       };
     }
-    kkpClauses.push('LOWER(TRIM(location_name)) = LOWER(TRIM(:loc))');
-    kkpParams.loc = stateName;
+    const locClause = bindIn('LOWER(TRIM(location_name))', stateNames.map((name) => name.toLowerCase()), 'loc', kkpParams);
+    if (locClause) kkpClauses.push(locClause);
   }
   const kw = whereStr(kkpClauses);
   const kkpRows = await safeFetchall(
@@ -300,10 +301,8 @@ function mixprogramYearFilter(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
   const clauses = [MIX_CANONICAL_ROW];
-  if (year) {
-    clauses.push('m.year = :year');
-    params.year = year;
-  }
+  const yearClause = bindIn('m.year', year, 'year', params);
+  if (yearClause) clauses.push(yearClause);
   return { w: whereStr(clauses), params };
 }
 
@@ -605,14 +604,23 @@ export async function getEducationGeoBenchmarks(filters) {
     ...GEO
   };
   const joinSelect = grain === 'district'
-    ? `COALESCE(NULLIF(TRIM(d.district_name), ''), ep.district_id::text, 'Unknown') AS label, ep.district_id::text AS id`
-    : `COALESCE(NULLIF(TRIM(s.state_name), ''), ep.state_id::text, 'Unknown') AS label, ep.state_id::text AS id`;
-  const joinSql = grain === 'district'
-    ? `LEFT JOIN skilltracking_district d ON d.district_id::text = ep.district_id::text`
-    : `LEFT JOIN skilltracking_state s ON s.state_id::text = ep.state_id::text`;
+    ? `COALESCE(
+         (SELECT NULLIF(TRIM(d.district_name), '') FROM skilltracking_district d
+          WHERE d.district_id::text = ep.district_id::text
+            AND d.state_id::text = ep.state_id::text
+          ORDER BY d.district_name LIMIT 1),
+         ep.district_id::text, 'Unknown') AS label,
+       ep.district_id::text AS id`
+    : `COALESCE(
+         (SELECT NULLIF(TRIM(s.state_name), '') FROM skilltracking_state s
+          WHERE s.state_id::text = ep.state_id::text
+          ORDER BY s.state_name LIMIT 1),
+         ep.state_id::text, 'Unknown') AS label,
+       ep.state_id::text AS id`;
+  const joinSql = '';
   const groupSql = grain === 'district'
-    ? `GROUP BY d.district_name, ep.district_id`
-    : `GROUP BY s.state_name, ep.state_id`;
+    ? `GROUP BY ep.state_id, ep.district_id`
+    : `GROUP BY ep.state_id`;
 
   const run = async (f, limit) => {
     const { clauses, params } = buildFilters(f, opts);

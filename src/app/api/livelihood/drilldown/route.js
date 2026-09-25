@@ -12,7 +12,8 @@ import {
   SKILL_DISTRICT,
   SKILL_STATE,
   SKILL_DISTRICT_BARE,
-  SKILL_STATE_BARE
+  SKILL_STATE_BARE,
+  resolveGeoId
 } from '@/lib/geoLookups.js';
 
 const F_PERSON_SP = {
@@ -687,7 +688,13 @@ export async function GET(req) {
 
     } else if (drillType === 'geo') {
       const grain = searchParams.get('grain') || 'state';
-      const geoId = searchParams.get('geo_id') || value;
+      const geoId = await resolveGeoId({
+        module: 'livelihood',
+        grain,
+        geoId: searchParams.get('geo_id') || value,
+        label: value,
+        stateId: filters.state_id
+      });
       const scoped = {
         ...filters,
         ...(grain === 'district'

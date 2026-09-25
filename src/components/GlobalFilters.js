@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Printer, X } from '@phosphor-icons/react';
 import { currentCalendarYear, currentFinancialYear, financialYearList } from '@/lib/phpRegistry.js';
+import { splitList } from '@/lib/analytics.js';
 import { printDashboard } from '@/lib/printCharts';
 
 function moduleFromPath(pathname) {
@@ -134,12 +135,65 @@ function readUrl(searchParams, mod) {
   return next;
 }
 
-function Field({ label, children }) {
+function MultiSelect({ label, name, value, options, onChange, disabled, emptyLabel }) {
+  const selected = splitList(value);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const close = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  const summary = !selected.length
+    ? emptyLabel
+    : selected.length === 1
+      ? (options.find((opt) => String(opt.id) === selected[0])?.name || selected[0])
+      : `${selected.length} selected`;
+
+  const toggle = (id) => {
+    const key = String(id);
+    const next = selected.includes(key)
+      ? selected.filter((item) => item !== key)
+      : [...selected, key];
+    onChange(name, next.join(','));
+  };
+
   return (
-    <label className="filter-field">
-      <span className="sr-only">{label}</span>
-      {children}
-    </label>
+    <div className={`multi-select ${disabled ? 'is-disabled' : ''}`} ref={ref}>
+      <button
+        type="button"
+        className="multi-select__btn"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {summary}
+      </button>
+      {open && !disabled && (
+        <div className="multi-select__menu" role="listbox" aria-label={label}>
+          {options.length === 0 && <div className="multi-select__empty">Nothing to choose</div>}
+          {options.map((opt) => {
+            const id = String(opt.id);
+            return (
+              <label key={id} className="multi-select__option">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(id)}
+                  onChange={() => toggle(id)}
+                />
+                <span>{opt.name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -236,8 +290,7 @@ export default function GlobalFilters({ onApply }) {
     return () => window.removeEventListener('app:filters:patch', onPatch);
   }, []);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
+  const setField = (name, value) => {
     setFilters((prev) => {
       const next = { ...prev, [name]: value };
       if (name === 'academic_year' || name === 'financial_year') {
@@ -257,21 +310,9 @@ export default function GlobalFilters({ onApply }) {
     });
   };
 
-  const clearKey = (key) => {
-    setFilters((prev) => {
-      const next = { ...prev, [key]: '' };
-      if (key === 'academic_year' || key === 'financial_year') {
-        next.academic_year = '';
-        next.financial_year = '';
-      }
-      if (key === 'state_id') {
-        next.district_id = '';
-        activeStateIdRef.current = '';
-        setDistricts([]);
-      }
-      apply(next);
-      return next;
-    });
+  const removeValue = (key, id) => {
+    const remaining = splitList(filters[key]).filter((item) => item !== String(id));
+    setField(key, remaining.join(','));
   };
 
   const handleReset = () => {
@@ -282,13 +323,19 @@ export default function GlobalFilters({ onApply }) {
     apply(next);
   };
 
-  const stateName = locations.find((s) => String(s.id) === String(filters.state_id))?.name;
-  const districtName = districts.find((d) => String(d.id) === String(filters.district_id))?.name;
+  const stateIds = splitList(filters.state_id);
+  const districtIds = splitList(filters.district_id);
   const chips = [];
-  if (showLocation && stateName) chips.push({ key: 'state_id', label: stateName });
-  if (showLocation && districtName) chips.push({ key: 'district_id', label: districtName });
-  if (showGender && filters.gender) {
-    chips.push({ key: 'gender', label: filters.gender === 'F' ? 'Female' : 'Male' });
+  for (const id of stateIds) {
+    const name = locations.find((s) => String(s.id) === id)?.name || id;
+    if (showLocation) chips.push({ key: 'state_id', id, label: name });
+  }
+  for (const id of districtIds) {
+    const name = districts.find((d) => String(d.id) === id)?.name || id;
+    if (showLocation) chips.push({ key: 'district_id', id, label: name });
+  }
+  for (const id of splitList(filters.gender)) {
+    if (showGender) chips.push({ key: 'gender', id, label: id === 'F' ? 'Female' : 'Male' });
   }
 
   const fyYears = financialYearList(8);
@@ -332,64 +379,57 @@ export default function GlobalFilters({ onApply }) {
           <div className="filter-controls">
             {showLocation && (
               <>
-                <Field label="State">
-                  <select name="state_id" value={filters.state_id} onChange={handleChange}>
-                    <option value="">All states</option>
-                    {locations.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="District">
-                  <select
-                    name="district_id"
-                    value={filters.district_id}
-                    onChange={handleChange}
-                    disabled={!filters.state_id}
-                  >
-                    <option value="">All districts</option>
-                    {districts.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </Field>
+                <MultiSelect
+                  label="State"
+                  name="state_id"
+                  value={filters.state_id}
+                  options={locations}
+                  emptyLabel="All states"
+                  onChange={setField}
+                />
+                <MultiSelect
+                  label="District"
+                  name="district_id"
+                  value={filters.district_id}
+                  options={districts}
+                  emptyLabel="All districts"
+                  disabled={!filters.state_id}
+                  onChange={setField}
+                />
               </>
             )}
 
             {showCalendar && (
-              <Field label={moduleName === 'overview' ? 'Health year' : 'Year'}>
-                <select name="year" value={filters.year} onChange={handleChange}>
-                  <option value="">All years</option>
-                  {years.map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </Field>
+              <MultiSelect
+                label={moduleName === 'overview' ? 'Health year' : 'Year'}
+                name="year"
+                value={filters.year}
+                options={years.map((y) => ({ id: y, name: y }))}
+                emptyLabel="All years"
+                onChange={setField}
+              />
             )}
 
             {showFy && (
-              <Field label={fyLabel}>
-                <select
-                  name={moduleName === 'education' ? 'academic_year' : 'financial_year'}
-                  value={filters.financial_year || filters.academic_year}
-                  onChange={handleChange}
-                >
-                  <option value="">All years</option>
-                  {fyYears.map((fy) => (
-                    <option key={fy} value={fy}>{fy}</option>
-                  ))}
-                </select>
-              </Field>
+              <MultiSelect
+                label={fyLabel}
+                name={moduleName === 'education' ? 'academic_year' : 'financial_year'}
+                value={filters.financial_year || filters.academic_year}
+                options={fyYears.map((fy) => ({ id: fy, name: fy }))}
+                emptyLabel="All years"
+                onChange={setField}
+              />
             )}
 
             {showGender && (
-              <Field label="Gender">
-                <select name="gender" value={filters.gender} onChange={handleChange}>
-                  <option value="">All</option>
-                  <option value="F">Female</option>
-                  <option value="M">Male</option>
-                </select>
-              </Field>
+              <MultiSelect
+                label="Gender"
+                name="gender"
+                value={filters.gender}
+                options={[{ id: 'F', name: 'Female' }, { id: 'M', name: 'Male' }]}
+                emptyLabel="All"
+                onChange={setField}
+              />
             )}
           </div>
         )}
@@ -416,10 +456,10 @@ export default function GlobalFilters({ onApply }) {
         <div className="filter-chips">
           {chips.map((chip) => (
             <button
-              key={chip.key}
+              key={`${chip.key}-${chip.id}`}
               type="button"
               className="filter-chip"
-              onClick={() => clearKey(chip.key)}
+              onClick={() => removeValue(chip.key, chip.id)}
             >
               {chip.label}
               <X size={12} weight="bold" />
