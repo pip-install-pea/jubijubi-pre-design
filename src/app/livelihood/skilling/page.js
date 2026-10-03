@@ -11,13 +11,30 @@ import EChart, {
   heatmapOption,
   roseOption,
   funnelOption,
-  groupedBarOption
+  groupedBarOption,
+  stackedBarOption
 } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
 import { formatCount, formatINR } from '../../../lib/format';
+
+function outcomeChart(rows) {
+  const list = rows || [];
+  const districts = [...new Set(list.map((row) => row.district))];
+  const statuses = [...new Set(list.map((row) => row.status))];
+  return {
+    districts,
+    series: statuses.map((status) => ({
+      label: status,
+      data: districts.map((district) => {
+        const found = list.find((row) => row.district === district && row.status === status);
+        return found ? Number(found.cnt) || 0 : 0;
+      })
+    }))
+  };
+}
 
 function incomeSeries(rows) {
   const list = rows || [];
@@ -110,6 +127,7 @@ export default function SkillingPage() {
   );
 
   const roster = Number(data?.beneficiaries?.roster_count ?? data?.beneficiaries?.total_trained) || 0;
+  const outcomes = outcomeChart(data?.beneficiaries?.status_by_district);
   const womenRow = data?.demographics?.gender_breakdown?.find(g => g.gender === 'Female' || g.gender === 'F');
   const womenCount = Number(womenRow?.count) || 0;
   const womenPct = roster > 0 ? ((womenCount / roster) * 100).toFixed(1) : null;
@@ -300,14 +318,30 @@ export default function SkillingPage() {
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Work status</h3></div>
+              <div className="card-header"><h3>Employment outcomes of candidates</h3></div>
               <div className="card-body">
-                <p className="chart-caption">All years</p>
+                <p className="chart-caption">Skill-tracking follow-ups (n = {formatCount(data.beneficiaries?.monitored_people)} people). All years.</p>
                 <BrandDoughnut
                   labels={data.beneficiaries?.status_breakdown?.map(r => r.status) || []}
                   values={data.beneficiaries?.status_breakdown?.map(r => r.count) || []}
+                  percent
                   onSliceClick={(label) => handleDrilldown('work_status', label)}
                 />
+                {outcomes.districts.length > 0 && (
+                  <EChart
+                    option={stackedBarOption(outcomes.districts, outcomes.series)}
+                    height={320}
+                    caption="By monitor district"
+                    onPoint={(point) => {
+                      const row = (data.beneficiaries?.status_by_district || []).find((item) => item.district === point.name && item.status === point.seriesName);
+                      if (!row) return;
+                      handleDrilldown('work_status', row.status, {
+                        outcome_district: row.district,
+                        ...(row.district_id ? { district_id: row.district_id } : {})
+                      });
+                    }}
+                  />
+                )}
               </div>
             </div>
             <div className="card">
@@ -328,12 +362,13 @@ export default function SkillingPage() {
 
           <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Gender · roster</h3></div>
+              <div className="card-header"><h3>Gender ratio</h3></div>
               <div className="card-body">
-                <p className="chart-caption">All years</p>
+                <p className="chart-caption">All years. Blank gender is shown as Not recorded.</p>
                 <BrandDoughnut
                   labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
                   values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
+                  percent
                   onSliceClick={(label) => handleDrilldown('gender', label)}
                 />
               </div>

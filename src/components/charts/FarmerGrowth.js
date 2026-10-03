@@ -10,7 +10,8 @@ function fmt(n) {
 export default function FarmerGrowth({
   byYear = [],
   locationsByYear = {},
-  onLocationClick
+  onLocationClick,
+  onYearClick
 }) {
   const years = byYear.map((r) => r.year);
   const [selected, setSelected] = useState(years[years.length - 1] || '');
@@ -95,7 +96,11 @@ export default function FarmerGrowth({
           barName: 'Added since previous year',
           lineName: 'Running total'
         })}
-        onPoint={(p) => p.name && setSelected(p.name)}
+        onPoint={(p) => {
+          if (!p.name) return;
+          setSelected(p.name);
+          onYearClick?.(p.name);
+        }}
       />
 
       {locations.length > 0 && (

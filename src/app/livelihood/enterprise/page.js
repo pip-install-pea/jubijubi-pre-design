@@ -99,7 +99,7 @@ export default function EnterprisePage() {
                 <FarmerGrowth
                   byYear={data.farmers.by_year || []}
                   locationsByYear={data.farmers.locations_by_year || {}}
-                  onLocationClick={(name) => handleDrilldown('mix_farmer_location', name)}
+                  onYearClick={(year) => handleDrilldown('mix_farmer_year', year)}
                 />
               </div>
             </div>
@@ -237,7 +237,7 @@ export default function EnterprisePage() {
                     <div className="kpi-label">Active members</div>
                   </div>
                 </div>
-                <div className="kpi-card">
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('enterprise_active')}>
                   <div className="kpi-body">
                     <div className="kpi-value">{
                       data.mentorship?.total_members
@@ -248,7 +248,7 @@ export default function EnterprisePage() {
                     <p className="kpi-caption">Active members / total</p>
                   </div>
                 </div>
-                <div className="kpi-card">
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('enterprise_districts')}>
                   <div className="kpi-body">
                     <div className="kpi-value">{data.mentorship?.districts_covered || '—'}</div>
                     <div className="kpi-label">Districts covered</div>

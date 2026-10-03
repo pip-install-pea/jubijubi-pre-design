@@ -111,6 +111,7 @@ function Field({ col, value, options, onChange }) {
 
 export default function DrilldownModal({ isOpen, onClose, title, apiUrl, params }) {
   const [data, setData] = useState({ columns: [], rows: [], total: 0, facets: {} });
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [findText, setFindText] = useState('');
@@ -126,6 +127,7 @@ export default function DrilldownModal({ isOpen, onClose, title, apiUrl, params 
   const fetchData = React.useCallback(async () => {
     if (!apiUrl) return;
     setLoading(true);
+    setError('');
     try {
       const parsedParams = paramsStr ? JSON.parse(paramsStr) : {};
       const res = await axios.get(apiUrl, {
@@ -136,13 +138,20 @@ export default function DrilldownModal({ isOpen, onClose, title, apiUrl, params 
           ...filterParams(JSON.parse(filterStr || '{}'))
         }
       });
+      if (res.data?.error && !Array.isArray(res.data?.columns)) {
+        setError(String(res.data.error));
+        setData({ columns: [], rows: [], total: 0, facets: {} });
+        return;
+      }
       const next = res.data || { columns: [], rows: [], total: 0, facets: {} };
       setData(next);
       if (next.facets && Object.keys(next.facets).length) {
         setFacetCache((prev) => ({ ...prev, ...next.facets }));
       }
     } catch (err) {
-      console.error('Drilldown fetch failed', err);
+      const message = err?.response?.data?.error || err?.message || 'Could not load this list.';
+      setError(String(message));
+      setData({ columns: [], rows: [], total: 0, facets: {} });
     } finally {
       setLoading(false);
     }
@@ -157,6 +166,7 @@ export default function DrilldownModal({ isOpen, onClose, title, apiUrl, params 
       setAddedKeys([]);
       setFacetCache({});
       setPickerOpen(false);
+      setError('');
       setData({ columns: [], rows: [], total: 0, facets: {} });
     }
   }, [isOpen, fetchData]);
@@ -227,9 +237,16 @@ export default function DrilldownModal({ isOpen, onClose, title, apiUrl, params 
         <div className="drilldown-header">
           <div>
             <h3 className="drilldown-title">{title}</h3>
-            <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-              {loading ? 'Loading…' : `${visibleRows.length.toLocaleString('en-IN')} of ${Number(data.total || 0).toLocaleString('en-IN')} on this page`}
-            </span>
+            {error ? (
+              <p style={{ fontSize: '13px', color: 'var(--muted)', margin: '4px 0 0' }}>
+                {error}
+                <button type="button" onClick={fetchData} style={{ marginLeft: 8 }}>Retry</button>
+              </p>
+            ) : (
+              <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                {loading ? 'Loading…' : `${visibleRows.length.toLocaleString('en-IN')} of ${Number(data.total || 0).toLocaleString('en-IN')} on this page`}
+              </span>
+            )}
             {data.caption && (
               <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '4px 0 0' }}>{data.caption}</p>
             )}

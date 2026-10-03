@@ -153,11 +153,11 @@ export default function PlacementPage() {
             </div>
           )}
           <div className="kpi-grid">
-            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('funnel', 'monitored')}>
               <div className="kpi-body">
-                <div className="kpi-value">{fmt(data.status?.total)}</div>
+                <div className="kpi-value">{fmt(data.status?.people)}</div>
                 <div className="kpi-label">People monitored</div>
-                <p className="kpi-caption">All years</p>
+                <p className="kpi-caption">Distinct people with a follow-up. All years. {fmt(data.status?.total)} follow-up rows.</p>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('placement_status', 'Working')}>

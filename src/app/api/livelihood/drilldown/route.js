@@ -122,6 +122,11 @@ export async function GET(req) {
         clauses.push(`${genderBucketSql('sp.gender')} = :slice_gender`);
         params.slice_gender = sliceGender;
       }
+      const outcomeDistrict = searchParams.get('outcome_district');
+      if (outcomeDistrict) {
+        clauses.push(`COALESCE(NULLIF(btrim(sd.district_name), ''), NULLIF(sm.district_id::text, ''), 'Not recorded') = :outcome_district`);
+        params.outcome_district = outcomeDistrict;
+      }
       if (q) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
         params.q = `%${q}%`;
@@ -129,10 +134,16 @@ export async function GET(req) {
       addColFilters(searchParams, clauses, params, F_MONITOR);
       const w = whereStr(clauses);
 
+      const districtJoin = `
+        LEFT JOIN skilltracking_district sd
+          ON sd.district_id::text = sm.district_id::text
+         AND sd.state_id::text = sm.state_id::text
+      `;
       total = await scalar(`
         SELECT COUNT(*)::integer 
         FROM skilltracking_monitor sm
         LEFT JOIN skilltracking_persons sp ON sp.person_id = sm.person_id
+        ${districtJoin}
         ${w}
       `, params);
 
@@ -143,6 +154,7 @@ export async function GET(req) {
           sm.date_of_monitor
         FROM skilltracking_monitor sm
         LEFT JOIN skilltracking_persons sp ON sp.person_id = sm.person_id
+        ${districtJoin}
         ${w}
         ORDER BY sm.date_of_monitor DESC
         LIMIT :lim OFFSET :off
@@ -461,33 +473,38 @@ export async function GET(req) {
         { key: "district",      label: "District" },
       ];
 
-    } else if (drillType === 'enterprise_total') {
+    } else if (drillType === 'enterprise_total' || drillType === 'enterprise_active' || drillType === 'enterprise_districts') {
       const { clauses, params } = buildFilters(filters, {
         state_col: 'es.state_id',
         district_col: 'es.district_id',
-        date_col: 'es.created_at'
+        module: 'livelihood'
       });
+      if (drillType === 'enterprise_active') clauses.push("es.status = '1'");
       if (q) {
         clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
         params.q = `%${q}%`;
       }
       addColFilters(searchParams, clauses, params, F_ENTERPRISE);
       const w = whereStr(clauses);
-
-      total = await scalar(`SELECT COUNT(*)::integer FROM enterprise_support es ${w}`, params);
-
+      const districtExpr = `COALESCE(NULLIF(btrim(sd.district_name), ''), NULLIF(es.district_id::text, ''), 'Not recorded')`;
+      const fromSql = `
+        FROM enterprise_support es
+        LEFT JOIN skilltracking_district sd
+          ON sd.district_id::text = es.district_id::text
+         AND sd.state_id::text = es.state_id::text
+        ${w}
+      `;
+      total = await scalar(`SELECT COUNT(*)::integer ${fromSql}`, params);
       rows = await fetchall(`
         SELECT
           es.member_id, es.member_name, es.member_type, es.member_mode,
           es.phone_number, es.supported_by,
           CASE WHEN es.status = '1' THEN 'Active' ELSE 'Inactive' END AS status,
-          es.created_at
-        FROM enterprise_support es
-        ${w}
-        ORDER BY es.created_at DESC
+          ${districtExpr} AS district
+        ${fromSql}
+        ORDER BY ${drillType === 'enterprise_districts' ? `${districtExpr}, es.member_name` : 'es.member_name'}
         LIMIT :lim OFFSET :off
       `, { ...params, lim: perPage, off: offset });
-
       columns = [
         { key: "member_id",    label: "Member ID" },
         { key: "member_name",  label: "Name" },
@@ -496,43 +513,7 @@ export async function GET(req) {
         { key: "phone_number", label: "Phone" },
         { key: "supported_by", label: "Supported By" },
         { key: "status",       label: "Status" },
-        { key: "created_at",   label: "Created On" }
-      ];
-
-    } else if (drillType === 'enterprise_active') {
-      const { clauses, params } = buildFilters(filters, {
-        state_col: 'es.state_id',
-        district_col: 'es.district_id',
-        date_col: 'es.created_at'
-      });
-      clauses.push("es.status = '1'");
-      if (q) {
-        clauses.push("(es.member_name ILIKE :q OR es.phone_number ILIKE :q OR es.member_id::text LIKE :q)");
-        params.q = `%${q}%`;
-      }
-      addColFilters(searchParams, clauses, params, F_ENTERPRISE);
-      const w = whereStr(clauses);
-
-      total = await scalar(`SELECT COUNT(*)::integer FROM enterprise_support es ${w}`, params);
-
-      rows = await fetchall(`
-        SELECT
-          es.member_id, es.member_name, es.member_type, es.member_mode,
-          es.phone_number, es.supported_by, es.created_at
-        FROM enterprise_support es
-        ${w}
-        ORDER BY es.created_at DESC
-        LIMIT :lim OFFSET :off
-      `, { ...params, lim: perPage, off: offset });
-
-      columns = [
-        { key: "member_id",    label: "Member ID" },
-        { key: "member_name",  label: "Name" },
-        { key: "member_type",  label: "Type" },
-        { key: "member_mode",  label: "Mode" },
-        { key: "phone_number", label: "Phone" },
-        { key: "supported_by", label: "Supported By" },
-        { key: "created_at",   label: "Created On" }
+        { key: "district",     label: "District" }
       ];
 
     } else if (drillType === 'enterprise_monitored') {
@@ -768,7 +749,7 @@ export async function GET(req) {
           LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = skilltracking_persons.training_stream_id
           ${SKILL_BARE_GEO_JOIN}
           ${w}
-          ORDER BY created_at DESC
+          ORDER BY skilltracking_persons.created_at DESC
           LIMIT :lim OFFSET :off
         `, { ...params, lim: perPage, off: offset });
         columns = [
@@ -947,13 +928,12 @@ export async function GET(req) {
           person_id, person_name, gender, mobile_number,
           COALESCE(ts.stream_name, training_stream_id, '—') AS trade,
           date_of_completion_of_training,
-          ${SKILL_STATE_BARE} AS state, ${SKILL_DISTRICT_BARE} AS district,
-          created_at
+          ${SKILL_STATE_BARE} AS state, ${SKILL_DISTRICT_BARE} AS district
         FROM skilltracking_persons
         LEFT JOIN skilltracking_training_stream ts ON ts.stream_id = skilltracking_persons.training_stream_id
         ${SKILL_BARE_GEO_JOIN}
         ${w}
-        ORDER BY created_at DESC
+        ORDER BY skilltracking_persons.created_at DESC
         LIMIT :lim OFFSET :off
       `, { ...params, lim: perPage, off: offset });
 
@@ -1042,6 +1022,26 @@ export async function GET(req) {
         });
         return NextResponse.json(payload);
       }
+      if (drillType === 'mix_farmer_year') {
+        const payload = await queryMixRows({
+          searchParams,
+          ...mixCommon,
+          year: value || year,
+          extraClauses: [`m.program_id::text IN ('1','2')`],
+          qSql: '(m.location ILIKE :q)',
+          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            m.year, COALESCE(m.number_of_farmers, 0)::integer AS farmers`,
+          columns: [
+            { key: 'location', label: 'Location' },
+            { key: 'year', label: 'Year' },
+            { key: 'farmers', label: 'Farmers' }
+          ]
+        });
+        return NextResponse.json({
+          ...payload,
+          caption: 'Farmer-level list not available in source data.'
+        });
+      }
       if (drillType === 'mix_farmer_location') {
         const payload = await queryMixRows({
         searchParams,
@@ -1109,10 +1109,14 @@ export async function GET(req) {
       rows,
       total,
       page,
-      per_page: perPage
+      per_page: perPage,
+      ...(drillType === 'enterprise_districts'
+        ? { caption: 'Members in the districts this card counts.' }
+        : {})
     });
   } catch (err) {
     console.error('Error in livelihood drilldown API:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    const message = err?.message || 'Internal Server Error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

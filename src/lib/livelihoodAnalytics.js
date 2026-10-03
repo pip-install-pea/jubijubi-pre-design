@@ -260,14 +260,42 @@ export async function getSkillingBeneficiaries(filters) {
   );
 
   const statusBreakdown = statusRows.map(r => ({
-    status: r.status || 'Not Reported',
+    status: r.status || 'Not reported',
     count: r.cnt
   }));
+
+  const monitoredPeople = await scalar(
+    `SELECT COUNT(DISTINCT person_id)::integer FROM skilltracking_monitor ${mw}`,
+    mParams
+  );
+
+  const { clauses: dClauses, params: dParams } = lf(filters, {
+    state_col: 'sm.state_id',
+    district_col: 'sm.district_id',
+    date_col: 'sm.date_of_monitor'
+  });
+  const statusByDistrict = await fetchall(
+    `SELECT
+       COALESCE(NULLIF(btrim(sd.district_name), ''), NULLIF(sm.district_id::text, ''), 'Not recorded') AS district,
+       NULLIF(sm.district_id::text, '') AS district_id,
+       COALESCE(NULLIF(btrim(sm.work_status), ''), 'Not reported') AS status,
+       COUNT(*)::integer AS cnt
+     FROM skilltracking_monitor sm
+     LEFT JOIN skilltracking_district sd
+       ON sd.district_id::text = sm.district_id::text
+      AND sd.state_id::text = sm.state_id::text
+     ${whereStr(dClauses)}
+     GROUP BY 1, 2, 3
+     ORDER BY 1, cnt DESC`,
+    dParams
+  );
 
   return {
     roster_count: total,
     total_trained: total,
-    status_breakdown: statusBreakdown
+    status_breakdown: statusBreakdown,
+    monitored_people: monitoredPeople,
+    status_by_district: statusByDistrict
   };
 }
 
@@ -423,6 +451,10 @@ export async function getPlacementStatus(filters) {
   );
 
   const total = rows.reduce((sum, r) => sum + r.cnt, 0);
+  const people = await scalar(
+    `SELECT COUNT(DISTINCT person_id)::integer FROM skilltracking_monitor ${w}`,
+    params
+  );
   const breakdown = rows.map(r => ({
     status: r.status || 'Not Reported',
     count: r.cnt,
@@ -465,7 +497,7 @@ export async function getPlacementStatus(filters) {
     };
   }).filter((group) => group.total > 0);
 
-  return { total, breakdown, by_gender: byGender };
+  return { total, people, breakdown, by_gender: byGender };
 }
 
 function sharesOf100(counts) {
