@@ -5,11 +5,22 @@ import EChart, { groupedBarOption } from './EChart';
 import { hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-export default function ColumnBar({ labels = [], values = [], title, caption, onBarClick, focus = [] }) {
+export default function ColumnBar({
+  labels = [],
+  values = [],
+  series = null,
+  title,
+  caption,
+  onBarClick,
+  focus = [],
+  axisTitle = ''
+}) {
   const option = useMemo(() => {
-    if (!hasValues(values)) return null;
-    return groupedBarOption(labels, [{ label: 'Count', data: values }]);
-  }, [labels, values]);
+    const datasets = series || [{ label: 'Count', data: values }];
+    const flat = datasets.flatMap((item) => item.data || []);
+    if (!hasValues(flat)) return null;
+    return groupedBarOption(labels, datasets, { yName: axisTitle, legend: Boolean(series) });
+  }, [labels, values, series, axisTitle]);
 
   if (!option) return <ChartEmpty caption={caption} />;
 

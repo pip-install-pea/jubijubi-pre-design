@@ -197,9 +197,9 @@ export function comboLineBarOption(labels, { bar, line, barName = 'Added this ye
   };
 }
 
-export function doughnutOption(items) {
+export function doughnutOption(items, { percent = false } = {}) {
   const data = (items || [])
-    .map((r) => ({ name: String(r.label ?? r.name ?? 'Unknown'), value: Number(r.value) || 0 }))
+    .map((r) => ({ name: String(r.label ?? r.name ?? 'Unknown'), value: Number(r.value) || 0, percent: r.percent }))
     .filter((r) => r.value > 0);
   return {
     tooltip: { trigger: 'item', renderMode: 'richText' },
@@ -208,7 +208,16 @@ export function doughnutOption(items) {
       type: 'pie',
       radius: ['48%', '72%'],
       center: ['38%', '50%'],
-      data
+      data,
+      ...(percent ? {
+        label: {
+          formatter: (p) => {
+            const stored = p.data?.percent;
+            const pct = stored == null ? p.percent : stored;
+            return `${Number(pct).toFixed(1)}%`;
+          }
+        }
+      } : {})
     }]
   };
 }
@@ -237,17 +246,17 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '' } = {}) {
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: legend ? { bottom: 0 } : { show: false },
-    grid: { left: 8, right: 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    grid: { left: yName ? 48 : 8, right: 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
     xAxis: horizontal
-      ? { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
+      ? { type: 'value', name: yName || undefined, nameLocation: 'middle', nameGap: 36, axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
       : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
     yAxis: horizontal
       ? { type: 'category', data: labels }
-      : { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
+      : { type: 'value', name: yName || undefined, nameLocation: 'middle', nameGap: 36, axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
     series: (datasets || []).map((ds) => ({
       type: 'bar',
       name: ds.label,
