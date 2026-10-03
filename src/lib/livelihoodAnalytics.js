@@ -39,6 +39,16 @@ export function mixWorkingSql(col = 'm.placement_status') {
   return `(${placementStatusSql(col)} IN ('Working', 'Self employment'))`;
 }
 
+/** "Phase 1", "phase 1", and "1" share one bar, ordered by the phase number. */
+export function phaseLabelSql(col = 'm.phase') {
+  const raw = `btrim(COALESCE(${col}::text, ''))`;
+  return `CASE
+    WHEN ${raw} ~ '[0-9]' THEN 'Phase ' || ((regexp_match(${raw}, '([0-9]+)'))[1])::integer::text
+    WHEN ${raw} = '' THEN 'Not recorded'
+    ELSE ${raw}
+  END`;
+}
+
 /** Sheet and roster spellings collapse to Female, Male, Others, or Not recorded. */
 export function genderBucketSql(col) {
   const raw = `lower(regexp_replace(btrim(COALESCE(${col}::text, '')), '\\s+', ' ', 'g'))`;
@@ -1167,9 +1177,15 @@ export async function getMixprogramDidi(filters) {
     );
     const people = Number(kpis[0]?.people) || 0;
     if (!people) return empty;
+    const phaseLabel = phaseLabelSql('m.phase');
     const byPhase = await fetchall(
-      `SELECT COALESCE(${displaySql('m.phase')}, 'Unknown') AS label, COUNT(*)::integer AS value
-       FROM education_mixprogram m ${w} GROUP BY ${softFoldSql('m.phase')} ORDER BY value DESC`,
+      `SELECT ${phaseLabel} AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY 1
+       ORDER BY CASE
+         WHEN ${phaseLabel} ~ '^Phase [0-9]+$' THEN substring(${phaseLabel} from '[0-9]+')::integer
+         ELSE 999
+       END, 1`,
       params
     );
     const byType = await fetchall(
@@ -1195,26 +1211,6 @@ export async function getMixprogramDidi(filters) {
       `${w} AND ${preInd} IS NOT NULL AND ${postInd} IS NOT NULL`,
       params
     );
-    const flows = await fetchall(
-      `SELECT COALESCE(${displaySql('m.phase')}, 'Unknown') AS source,
-              COALESCE(${displaySql('m.training_type')}, 'Unknown') AS target,
-              COUNT(*)::integer AS value
-       FROM education_mixprogram m ${w}
-       GROUP BY ${softFoldSql('m.phase')}, ${softFoldSql('m.training_type')}`,
-      params
-    );
-    const typeNames = new Set(flows.map((f) => f.target));
-    const phaseNames = new Set(flows.map((f) => f.source));
-    const renameType = (t) => (phaseNames.has(t) ? `Training: ${t}` : t);
-    const sankeyNodes = [
-      ...[...phaseNames].map((n) => ({ name: n })),
-      ...[...typeNames].map((n) => ({ name: renameType(n) }))
-    ];
-    const links = flows.map((f) => ({
-      source: f.source,
-      target: renameType(f.target),
-      value: Number(f.value) || 0
-    }));
     return {
       status: 'ok',
       people,
@@ -1230,8 +1226,7 @@ export async function getMixprogramDidi(filters) {
       by_type: byType,
       by_gender: byGender,
       by_location: withCanonicalPlaces(mergeSimilarLabels(byLocation)),
-      income_change: incomeChange,
-      sankey: { nodes: sankeyNodes, links }
+      income_change: incomeChange
     };
   } catch (err) {
     console.warn('[livelihoodAnalytics] mixprogram didi skipped:', err.message);

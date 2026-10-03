@@ -237,11 +237,11 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true } = {}) {
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
-    legend: { bottom: 0 },
-    grid: { left: 8, right: 16, top: 24, bottom: 48, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    legend: legend ? { bottom: 0 } : { show: false },
+    grid: { left: 8, right: 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
     xAxis: horizontal
       ? { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
       : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
@@ -252,7 +252,17 @@ export function groupedBarOption(labels, datasets, { horizontal = false } = {}) 
       type: 'bar',
       name: ds.label,
       emphasis: { focus: 'series' },
-      data: ds.data
+      data: ds.data,
+      ...(showLabels ? {
+        label: {
+          show: true,
+          position: horizontal ? 'right' : 'top',
+          formatter: (p) => {
+            const n = Number(p.value);
+            return Number.isFinite(n) ? n.toLocaleString('en-IN') : '';
+          }
+        }
+      } : {})
     }))
   };
 }

@@ -7,8 +7,8 @@ import BrandLine from '../../../components/charts/BrandLine';
 import ColumnBar from '../../../components/charts/ColumnBar';
 import EChart, {
   treemapOption,
-  sankeyOption,
-  roseOption
+  roseOption,
+  groupedBarOption
 } from '../../../components/charts/EChart';
 import FarmerGrowth from '../../../components/charts/FarmerGrowth';
 import DrilldownModal from '../../../components/DrilldownModal';
@@ -108,7 +108,7 @@ export default function EnterprisePage() {
           {data.didi?.status === 'ok' && (
             <div className="card" style={{ marginBottom: '24px' }}>
               <div className="card-header">
-                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi Ka Dukan</h3>
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki dukan</h3>
               </div>
               <div className="card-body">
                 <div className="kpi-grid">
@@ -139,12 +139,17 @@ export default function EnterprisePage() {
                 </div>
                 <div className="card-row" style={{ marginTop: '16px' }}>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Phase to training type</h3></div>
+                    <div className="card-header"><h3>Women in each phase</h3></div>
                     <div className="card-body">
                       <EChart
-                        option={sankeyOption(data.didi.sankey?.nodes, data.didi.sankey?.links)}
+                        option={groupedBarOption(
+                          (data.didi.by_phase || []).map((r) => r.label),
+                          [{ label: 'Women', data: (data.didi.by_phase || []).map((r) => Number(r.value) || 0) }],
+                          { showLabels: true, legend: false }
+                        )}
                         height={360}
-                        onPoint={(p) => p.name && handleDrilldown('mix_didi_phase', p.name.replace(/^Training: /, ''))}
+                        caption="Counted per phase; a woman in more than one phase is counted in each."
+                        onPoint={(p) => p.name && handleDrilldown('mix_didi_phase', p.name)}
                       />
                     </div>
                   </div>

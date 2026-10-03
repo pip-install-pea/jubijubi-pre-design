@@ -103,7 +103,7 @@ export async function getOverview(filters, user) {
       { label: 'Skill roster', value: result.livelihood_roster },
       { label: 'Skilling sheet', value: result.skilling_sheet },
       { label: 'Enterprise members', value: result.enterprise_members },
-      { label: 'Didi Ka Dukan', value: result.didi_people },
+      { label: 'Didi ki dukan', value: result.didi_people },
       { label: 'Jubifarm farmers', value: result.farmers }
     ].filter((r) => r.value > 0);
     try {

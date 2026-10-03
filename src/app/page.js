@@ -135,7 +135,7 @@ export default function Dashboard() {
                 if (p.name === 'Skill roster') openDrill(p.name, '/api/livelihood/drilldown', 'persons', '');
                 else if (p.name === 'Skilling sheet') openDrill(p.name, '/api/livelihood/drilldown', 'mix_course', '');
                 else if (p.name === 'Enterprise members') openDrill(p.name, '/api/livelihood/drilldown', 'enterprise_total', '');
-                else if (p.name === 'Didi Ka Dukan') openDrill(p.name, '/api/livelihood/drilldown', 'mix_didi_location', '');
+                else if (p.name === 'Didi ki dukan') openDrill(p.name, '/api/livelihood/drilldown', 'mix_didi_location', '');
                 else if (p.name === 'Jubifarm farmers') openDrill(p.name, '/api/livelihood/drilldown', 'mix_farmer_location', '');
               }}
             />

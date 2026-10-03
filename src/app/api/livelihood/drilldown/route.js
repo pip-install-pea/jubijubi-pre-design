@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, buildFilters, whereStr, validDateClause } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
-import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql } from '@/lib/livelihoodAnalytics.js';
+import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -1075,7 +1075,9 @@ export async function GET(req) {
                 ? eqFold(`m.${field}`, 'drill_value')
                 : field === 'person_gender'
                   ? `${genderBucketSql('m.person_gender')} = :drill_value`
-                  : eqSoft(`m.${field}`, 'drill_value'))
+                  : field === 'phase'
+                    ? `${phaseLabelSql('m.phase')} = :drill_value`
+                    : eqSoft(`m.${field}`, 'drill_value'))
               : 'TRUE'
           ],
           extraParams: { drill_value: value },
