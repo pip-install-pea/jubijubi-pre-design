@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
-import { getFiltersFromRequest, buildFilters, whereStr, validDateClause } from '@/lib/analytics.js';
+import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
-import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql } from '@/lib/livelihoodAnalytics.js';
+import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql, validIncomeSql, incomeDeltaSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -111,9 +111,16 @@ export async function GET(req) {
         district_col: 'sm.district_id',
         date_col: 'sm.date_of_monitor'
       });
-      if (value) {
+      if (value === 'Not reported' || value === 'Not Reported') {
+        clauses.push("(sm.work_status IS NULL OR btrim(COALESCE(sm.work_status, '')) = '')");
+      } else if (value) {
         clauses.push("COALESCE(sm.work_status, '') = :drill_value");
         params.drill_value = value;
+      }
+      const sliceGender = searchParams.get('slice_gender');
+      if (sliceGender) {
+        clauses.push(`${genderBucketSql('sp.gender')} = :slice_gender`);
+        params.slice_gender = sliceGender;
       }
       if (q) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
@@ -840,23 +847,21 @@ export async function GET(req) {
       }
 
     } else if (drillType === 'income_delta') {
-      const pre = `CASE WHEN btrim(COALESCE(m.pre_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.pre_income::text)::numeric END`;
-      const post = `CASE WHEN btrim(COALESCE(m.post_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.post_income::text)::numeric END`;
-      const bucket = `CASE
-        WHEN ${pre} IS NULL OR ${post} IS NULL THEN 'No income pair'
-        WHEN ${post} - ${pre} < 0 THEN 'Income fell'
-        WHEN ${post} - ${pre} = 0 THEN 'No change'
-        WHEN ${post} - ${pre} <= 2000 THEN '+₹1–2,000'
-        WHEN ${post} - ${pre} <= 5000 THEN '+₹2,001–5,000'
-        ELSE '+₹5,000+'
-      END`;
+      const pre = validIncomeSql('m.pre_income');
+      const post = validIncomeSql('m.post_income');
+      const bucket = incomeDeltaSql(pre, post);
       const payload = await queryMixRows({
         searchParams,
         year: filters.academic_year || filters.financial_year,
         q,
         page,
         perPage,
-        extraClauses: [`m.program_id::text = '11'`, value ? `${bucket} = :drill_value` : 'TRUE'],
+        extraClauses: [
+          `m.program_id::text = '11'`,
+          `${pre} IS NOT NULL`,
+          `${post} IS NOT NULL`,
+          value ? `${bucket} = :drill_value` : 'TRUE'
+        ],
         extraParams: value ? { drill_value: value } : {},
         qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
         selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
@@ -879,8 +884,6 @@ export async function GET(req) {
         date_col: 'date_of_monitor',
         module: 'livelihood'
       });
-      clauses.push(validDateClause('date_of_monitor'));
-      clauses.push(`date_of_monitor ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'`);
       const cte = placementWindowCte(whereStr(clauses));
       const bucketCol = drillType === 'time_to_placement' ? 'time_bucket' : 'delta_bucket';
       const bucketFilter = value ? `WHERE ${bucketCol} = :drill_value` : '';
@@ -906,7 +909,7 @@ export async function GET(req) {
         ${cte}
         SELECT
           c.person_id, sp.person_name, sp.gender, sp.mobile_number,
-          c.time_bucket, c.first_dt, c.first_working_dt
+          c.time_bucket, c.completion_dt, c.first_working_dt
         FROM classified c
         LEFT JOIN skilltracking_persons sp ON sp.person_id = c.person_id
         ${bucketFilter} ${nameFilter} ${timeFilter}
@@ -918,7 +921,7 @@ export async function GET(req) {
         { key: 'person_name', label: 'Name' },
         { key: 'gender', label: 'Gender' },
         { key: 'time_bucket', label: 'Time to placement' },
-        { key: 'first_dt', label: 'First monitor' },
+        { key: 'completion_dt', label: 'Training completed' },
         { key: 'first_working_dt', label: 'First working' }
       ];
 

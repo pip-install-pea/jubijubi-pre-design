@@ -158,8 +158,12 @@ export default function EnterprisePage() {
                     <div className="card-body">
                       <ColumnBar
                         labels={(data.didi.income_change || []).map((r) => r.label)}
-                        values={(data.didi.income_change || []).map((r) => r.value)}
-                        caption="People with both an individual pre and post income. Household post income stays in the KPI above."
+                        series={[
+                          { label: 'Female', data: (data.didi.income_change || []).map((r) => Number(r.female) || 0) },
+                          { label: 'Male', data: (data.didi.income_change || []).map((r) => Number(r.male) || 0) }
+                        ]}
+                        axisTitle="No. of candidates"
+                        caption={`Women with both a recorded individual pre and post income (n = ${fmt((data.didi.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))}). Zero and blank values are left out. Household post income stays in the KPI above.`}
                       />
                     </div>
                   </div>

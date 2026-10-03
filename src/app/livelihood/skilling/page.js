@@ -17,6 +17,22 @@ import DrilldownModal from '../../../components/DrilldownModal';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
+import { formatCount, formatINR } from '../../../lib/format';
+
+function incomeSeries(rows) {
+  const list = rows || [];
+  const series = [
+    { label: 'Female', data: list.map((row) => Number(row.female) || 0) },
+    { label: 'Male', data: list.map((row) => Number(row.male) || 0) }
+  ];
+  if (list.some((row) => Number(row.not_recorded) > 0)) {
+    series.push({ label: 'Not recorded', data: list.map((row) => Number(row.not_recorded) || 0) });
+  }
+  if (list.some((row) => Number(row.others) > 0)) {
+    series.push({ label: 'Others', data: list.map((row) => Number(row.others) || 0) });
+  }
+  return series;
+}
 
 export default function SkillingPage() {
   const [data, setData] = useState(null);
@@ -128,8 +144,30 @@ export default function SkillingPage() {
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmt(data.mixSkilling.courses)}</div>
-                      <div className="kpi-label">Courses</div>
+                      <div className="kpi-label">Skilling courses (batches)</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                        <div>
+                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.ongoing)}</div>
+                          <div className="kpi-label">Ongoing</div>
+                        </div>
+                        <div>
+                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.completed)}</div>
+                          <div className="kpi-label">Completed</div>
+                        </div>
+                        <div>
+                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.total)}</div>
+                          <div className="kpi-label">Total</div>
+                        </div>
+                      </div>
+                      {(data.sessionsByTrade?.batches?.upcoming || 0) > 0 && (
+                        <p className="kpi-caption">Upcoming: {formatCount(data.sessionsByTrade.batches.upcoming)}</p>
+                      )}
+                      <p className="kpi-caption">
+                        From skill-tracking app batch start/end dates. All years.
+                        {(data.sessionsByTrade?.batches?.no_dates || 0) > 0
+                          ? ` ${formatCount(data.sessionsByTrade.batches.no_dates)} with no dates.`
+                          : ''}
+                      </p>
                     </div>
                   </div>
                   <div className="kpi-card">
@@ -140,14 +178,17 @@ export default function SkillingPage() {
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmtINR(data.mixSkilling.avg_pre)}</div>
-                      <div className="kpi-label">Mean pre income</div>
+                      <div className="kpi-value">{formatINR(data.mixSkilling.avg_pre)}</div>
+                      <div className="kpi-label">Mean Pre Income</div>
+                      <p className="kpi-caption">Average income before training, among candidates with a recorded pre-training income (n = {formatCount(data.mixSkilling.with_pre)}).</p>
                     </div>
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmtINR(data.mixSkilling.avg_post)}</div>
-                      <div className="kpi-label">Mean post income</div>
+                      <div className="kpi-value">{formatINR(data.mixSkilling.avg_post)}</div>
+                      <div className="kpi-label">Post Income</div>
+                      <p className="kpi-caption">(Enhancement in income status post completion of course)</p>
+                      <p className="kpi-caption">Average of candidates with a recorded income (n = {formatCount(data.mixSkilling.with_post)}). Zero and blank values are left out.</p>
                     </div>
                   </div>
                 </div>
@@ -188,8 +229,9 @@ export default function SkillingPage() {
                     <div className="card-body">
                       <ColumnBar
                         labels={(data.mixSkilling.income_change || []).map((r) => r.label)}
-                        values={(data.mixSkilling.income_change || []).map((r) => r.value)}
-                        caption="People who have both a pre and a post income."
+                        series={incomeSeries(data.mixSkilling.income_change)}
+                        axisTitle="No. of candidates"
+                        caption={`Candidates with both a recorded pre and post income (n = ${formatCount((data.mixSkilling.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))}). Zero and blank values are left out.`}
                         onBarClick={(label) => handleDrilldown('income_delta', label)}
                       />
                     </div>
@@ -326,7 +368,7 @@ export default function SkillingPage() {
               <div className="card-body">
                 <p className="chart-caption">All years</p>
                 <RankingBar
-                  items={(data.sessionsByTrade || []).map(r => ({ label: r.trade, value: r.batches }))}
+                  items={(data.sessionsByTrade?.trades || []).map(r => ({ label: r.trade, value: r.batches }))}
                   onBarClick={(label) => handleDrilldown('trade', label)}
                 />
               </div>
