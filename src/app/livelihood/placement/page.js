@@ -79,6 +79,7 @@ export default function PlacementPage() {
               <div className="kpi-body">
                 <div className="kpi-value">{fmt(data.status?.total)}</div>
                 <div className="kpi-label">People monitored</div>
+                <p className="kpi-caption">All years</p>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('placement_status', 'Working')}>
@@ -87,6 +88,7 @@ export default function PlacementPage() {
                   {data.status?.breakdown?.find(r => r.status === 'Working')?.percent || '—'}%
                 </div>
                 <div className="kpi-label">Share working</div>
+                <p className="kpi-caption">All years</p>
               </div>
             </div>
             <div className="kpi-card">
@@ -101,6 +103,7 @@ export default function PlacementPage() {
             <div className="card">
               <div className="card-header"><h3>Work status</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <BrandDoughnut
                   labels={data.status?.breakdown?.map(r => r.status) || []}
                   values={data.status?.breakdown?.map(r => r.count) || []}
@@ -138,6 +141,7 @@ export default function PlacementPage() {
             <div className="card">
               <div className="card-header"><h3>Time to first working status</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <ColumnBar
                   labels={(data.distributions?.time_to_placement || []).map((r) => r.label)}
                   values={(data.distributions?.time_to_placement || []).map((r) => r.value)}

@@ -235,12 +235,14 @@ export default function SkillingPage() {
               <div className="kpi-body">
                 <div className="kpi-value">{fmt(roster)}</div>
                 <div className="kpi-label">Skill roster</div>
+                <p className="kpi-caption">All years</p>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
               <div className="kpi-body">
                 <div className="kpi-value">{fmt(womenCount)}</div>
                 <div className="kpi-label">Women on roster</div>
+                <p className="kpi-caption">All years</p>
               </div>
             </div>
             {womenPct != null && (
@@ -248,7 +250,7 @@ export default function SkillingPage() {
                 <div className="kpi-body">
                   <div className="kpi-value">{womenPct}%</div>
                   <div className="kpi-label">Women share</div>
-                  <p className="kpi-caption">Of roster headcount</p>
+                  <p className="kpi-caption">Of roster headcount. All years.</p>
                 </div>
               </div>
             )}
@@ -258,6 +260,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Work status</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <BrandDoughnut
                   labels={data.beneficiaries?.status_breakdown?.map(r => r.status) || []}
                   values={data.beneficiaries?.status_breakdown?.map(r => r.count) || []}
@@ -285,6 +288,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Gender · roster</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <BrandDoughnut
                   labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
                   values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
@@ -295,6 +299,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Age brackets · roster</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <ColumnBar
                   labels={data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : []}
                   values={data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : []}
@@ -308,6 +313,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Roster by trade</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <RankingBar
                   items={(data.byTrade || []).map(r => ({ label: r.trade, value: r.count }))}
                   pareto
@@ -318,6 +324,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Batches by trade</h3></div>
               <div className="card-body">
+                <p className="chart-caption">All years</p>
                 <RankingBar
                   items={(data.sessionsByTrade || []).map(r => ({ label: r.trade, value: r.batches }))}
                   onBarClick={(label) => handleDrilldown('trade', label)}
@@ -333,7 +340,7 @@ export default function SkillingPage() {
               </h3>
             </div>
             <div className="card-body">
-              <p className="chart-caption">Roster geography only. Not the field sheet locations.</p>
+              <p className="chart-caption">All years. Roster geography only. Not the field sheet locations.</p>
               <BenchmarkBar
                 payload={data.benchmarks}
                 onBarClick={(label, row) => handleDrilldown('geo', label, {

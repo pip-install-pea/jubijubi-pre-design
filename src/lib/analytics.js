@@ -10,6 +10,40 @@ export function splitList(value) {
   return String(value).split(',').map((part) => part.trim()).filter(Boolean);
 }
 
+/**
+ * One selected FY matches the spellings stored on different tables:
+ * 2025-26, 2025-2026, and 25-26. Other values are left as given.
+ */
+export function financialYearAliases(value) {
+  const out = [];
+  const seen = new Set();
+  const add = (item) => {
+    const text = String(item || '').trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    out.push(text);
+  };
+  for (const raw of splitList(value)) {
+    add(raw);
+    let start = null;
+    const fourTwo = raw.match(/^(\d{4})-(\d{2})$/);
+    const fourFour = raw.match(/^(\d{4})-(\d{4})$/);
+    const twoTwo = raw.match(/^(\d{2})-(\d{2})$/);
+    if (fourTwo) start = Number(fourTwo[1]);
+    else if (fourFour) start = Number(fourFour[1]);
+    else if (twoTwo) {
+      const yy = Number(twoTwo[1]);
+      start = yy >= 70 ? 1900 + yy : 2000 + yy;
+    }
+    if (start == null) continue;
+    const end = start + 1;
+    add(`${start}-${String(end).slice(-2)}`);
+    add(`${start}-${end}`);
+    add(`${String(start).slice(-2)}-${String(end).slice(-2)}`);
+  }
+  return out;
+}
+
 /** Equality for one value, IN for several. Returns null when the list is empty. */
 export function bindIn(column, value, prefix, params) {
   const list = splitList(value);
@@ -63,8 +97,8 @@ export function buildFilters(filters, options = {}) {
   const genderClause = gender_col ? bindIn(gender_col, gender, 'gender', params) : null;
   const tradeClause = trade_col ? bindIn(trade_col, trade, 'trade', params) : null;
   const schoolClause = school_col ? bindIn(school_col, school_id, 'school_id', params) : null;
-  const academicClause = academic_year_col ? bindIn(academic_year_col, academic_yr, 'academic_year', params) : null;
-  const financialClause = financial_year_col ? bindIn(financial_year_col, financial_yr, 'financial_year', params) : null;
+  const academicClause = academic_year_col ? bindIn(academic_year_col, financialYearAliases(academic_yr), 'academic_year', params) : null;
+  const financialClause = financial_year_col ? bindIn(financial_year_col, financialYearAliases(financial_yr), 'financial_year', params) : null;
   const yearClause = date_col ? bindIn(`SUBSTR(${date_col}::text, 1, 4)`, year, 'year', params) : null;
   for (const clause of [stateClause, districtClause, partnerClause, genderClause, tradeClause, schoolClause, academicClause, financialClause, yearClause]) {
     if (clause) clauses.push(clause);

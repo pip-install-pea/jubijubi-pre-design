@@ -5,7 +5,7 @@ import axios from 'axios';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Printer, X } from '@phosphor-icons/react';
-import { currentCalendarYear, currentFinancialYear, financialYearList } from '@/lib/phpRegistry.js';
+import { currentCalendarYear, currentFinancialYear, financialYearList, financialYearListFloor } from '@/lib/phpRegistry.js';
 import { splitList } from '@/lib/analytics.js';
 import { printDashboard } from '@/lib/printCharts';
 
@@ -338,7 +338,9 @@ export default function GlobalFilters({ onApply }) {
     if (showGender) chips.push({ key: 'gender', id, label: id === 'F' ? 'Female' : 'Male' });
   }
 
-  const fyYears = financialYearList(8);
+  const fyYears = moduleName === 'livelihood'
+    ? financialYearListFloor(8, '2023-24')
+    : financialYearList(8);
   const years = calendarYears();
 
   const liveTabs = pathname?.startsWith('/livelihood');

@@ -1,5 +1,5 @@
 import { fetchall, scalar } from './db.js';
-import { bindIn, buildFilters, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { bindIn, buildFilters, financialYearAliases, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
 import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
 import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 
@@ -16,7 +16,7 @@ function mixYearClauses(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
   const clauses = [MIX_CANONICAL_ROW];
-  const yearClause = bindIn('m.year', year, 'year', params);
+  const yearClause = bindIn('m.year', financialYearAliases(year), 'year', params);
   if (yearClause) clauses.push(yearClause);
   return { clauses, params };
 }
@@ -921,7 +921,7 @@ export async function getMixprogramFarmers(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
   const yearClauses = [MIX_CANONICAL_ROW];
-  const yearClause = bindIn('m.year', year, 'year', params);
+  const yearClause = bindIn('m.year', financialYearAliases(year), 'year', params);
   if (yearClause) yearClauses.push(yearClause);
   const farmerWhere = whereStr([...yearClauses, `m.program_id::text IN ('1','2')`]);
   const otherWhere = whereStr([

@@ -1,5 +1,5 @@
 import { fetchall, scalar } from './db.js';
-import { bindIn, whereStr } from './analytics.js';
+import { bindIn, financialYearAliases, whereStr } from './analytics.js';
 import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
 import { eqFold } from './labelNorm.js';
 import { addColFilters, mixFilterExpr, fetchFacets } from './drilldownFilters.js';
@@ -21,7 +21,7 @@ export async function queryMixRows({
 }) {
   const params = { ...extraParams };
   const clauses = [MIX_CANONICAL_ROW];
-  const yearClause = bindIn('m.year', year, 'year', params);
+  const yearClause = bindIn('m.year', financialYearAliases(year), 'year', params);
   if (yearClause) clauses.push(yearClause);
   clauses.push(...extraClauses);
   if (q && qSql) {
