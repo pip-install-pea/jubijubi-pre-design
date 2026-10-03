@@ -5,7 +5,7 @@ import EChart, { doughnutOption } from './EChart';
 import { hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-export default function BrandDoughnut({ labels = [], values = [], percents = [], colors = [], title, caption, onSliceClick, focus = [], percent = false }) {
+export default function BrandDoughnut({ labels = [], values = [], percents = [], colors = [], title, caption, onSliceClick, focus = [], percent = false, pie = false }) {
   const paired = useMemo(() => labels
     .map((label, i) => ({
       label: String(label ?? 'Unknown'),
@@ -17,8 +17,8 @@ export default function BrandDoughnut({ labels = [], values = [], percents = [],
 
   const option = useMemo(() => {
     if (!hasValues(paired.map((r) => r.value))) return null;
-    return doughnutOption(paired, { percent });
-  }, [paired, percent]);
+    return doughnutOption(paired, { percent, pie });
+  }, [paired, percent, pie]);
 
   if (!option) return <ChartEmpty caption={caption} />;
 

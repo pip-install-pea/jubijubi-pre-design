@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Briefcase, GraduationCap, Users } from '@phosphor-icons/react';
 import RankingBar from '../../../components/charts/RankingBar';
 import BrandDoughnut from '../../../components/charts/BrandDoughnut';
 import ColumnBar from '../../../components/charts/ColumnBar';
@@ -32,7 +33,70 @@ import DrilldownModal from '../../../components/DrilldownModal';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
-import { formatCount, formatINR } from '../../../lib/format';
+import { formatCount, formatINR, formatINRFull } from '../../../lib/format';
+
+const BAR_COLORS = ['#1d4ed8', '#0f766e', '#f97316', '#be185d', '#7c3aed', '#0891b2', '#ca8a04', '#16a34a', '#9333ea', '#dc2626'];
+const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
+
+function courseIncomeOption(rows) {
+  const list = rows || [];
+  const option = groupedBarOption(
+    list.map((row) => row.label),
+    [
+      { label: 'Mean pre', data: list.map((row) => (Number(row.n_pre) ? Number(row.avg_pre) : null)), color: '#1d4ed8' },
+      { label: 'Mean post', data: list.map((row) => (Number(row.n_post) ? Number(row.avg_post) : null)), color: '#f97316' }
+    ],
+    { horizontal: true, showLabels: true, gridLeft: 160 }
+  );
+  option.tooltip = {
+    trigger: 'axis',
+    renderMode: 'richText',
+    formatter: (items) => {
+      const point = Array.isArray(items) ? items[0] : items;
+      const row = list[point?.dataIndex] || {};
+      return [
+        row.label,
+        Number(row.n_pre) ? `Mean pre ${formatINR(row.avg_pre)} (n = ${formatCount(row.n_pre)})` : 'no pre data',
+        Number(row.n_post) ? `Mean post ${formatINR(row.avg_post)} (n = ${formatCount(row.n_post)})` : 'No post income'
+      ].join('\n');
+    }
+  };
+  return option;
+}
+
+function locationIncomeOption(rows) {
+  const list = rows || [];
+  const option = groupedBarOption(
+    list.map((row) => row.label),
+    [{ label: 'Mean post', data: list.map((row) => row.avg_post), color: '#f97316' }],
+    { horizontal: true, showLabels: true, legend: false, gridLeft: 140 }
+  );
+  if (option.series[0]) {
+    option.series[0].label = {
+      show: true,
+      position: 'right',
+      formatter: (point) => {
+        const row = list[point.dataIndex] || {};
+        return `${formatINR(row.avg_post)} (n=${formatCount(row.n)})`;
+      }
+    };
+  }
+  option.tooltip = {
+    trigger: 'axis',
+    renderMode: 'richText',
+    formatter: (items) => {
+      const point = Array.isArray(items) ? items[0] : items;
+      const row = list[point?.dataIndex] || {};
+      return [
+        row.label,
+        `Mean ${formatINRFull(row.avg_post)}`,
+        `Median ${formatINRFull(row.median_post)}`,
+        `n = ${formatCount(row.n)}`
+      ].join('\n');
+    }
+  };
+  return option;
+}
 
 function outcomeChart(rows) {
   const list = rows || [];
@@ -119,7 +183,13 @@ export default function SkillingPage() {
   }, [fetchData]);
 
   const fmt = (n) => (n || n === 0) ? Number(n).toLocaleString('en-IN') : '—';
-  const fmtINR = (n) => (n || n === 0) ? `₹${Math.round(Number(n)).toLocaleString('en-IN')}` : '—';
+  const sheetMonthNote = filters.month
+    ? 'Rows with no month recorded are left out.'
+    : null;
+  const rosterMonthNote = filters.month
+    ? 'Months use the record date. Unparseable dates are left out.'
+    : null;
+  const grain = data?.benchmarks?.grain === 'district' ? 'district' : 'state';
 
   const handleDrilldown = (type, value = null, extraParams = {}, event) => {
     if (type === 'mix_course') {
@@ -158,189 +228,221 @@ export default function SkillingPage() {
       </PageRail>
       {data && (
         <>
-          {data.mixSkilling?.status === 'ok' && (
-            <div className="card" style={{ marginBottom: '24px' }}>
-              <div className="card-header">
-                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Skill Development Stats</h3>
-              </div>
-              <div className="card-body">
-                <p className="chart-caption">
-                  Course, gender, placement, and income from the skilling sheet. This is not the skill roster below.
-                </p>
-                <div className="kpi-grid">
-                  <div className="kpi-card">
-                    <div className="kpi-body">
-                      <div className="kpi-value">{fmt(data.mixSkilling.people)}</div>
-                      <div className="kpi-label">Total Candidates Enrolled</div>
-                    </div>
-                  </div>
-                  <div className="kpi-card">
-                    <div className="kpi-body">
-                      <div className="kpi-label">Skilling courses (batches)</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                        <div>
-                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.ongoing)}</div>
-                          <div className="kpi-label">Ongoing</div>
-                        </div>
-                        <div>
-                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.completed)}</div>
-                          <div className="kpi-label">Completed</div>
-                        </div>
-                        <div>
-                          <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.total)}</div>
-                          <div className="kpi-label">Total</div>
-                        </div>
-                      </div>
-                      {(data.sessionsByTrade?.batches?.upcoming || 0) > 0 && (
-                        <p className="kpi-caption">Upcoming: {formatCount(data.sessionsByTrade.batches.upcoming)}</p>
-                      )}
-                      <p className="kpi-caption">
-                        From skill-tracking app batch start/end dates. All years.
-                        {(data.sessionsByTrade?.batches?.no_dates || 0) > 0
-                          ? ` ${formatCount(data.sessionsByTrade.batches.no_dates)} with no dates.`
-                          : ''}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="kpi-card">
-                    <div className="kpi-body">
-                      <div className="kpi-value">{fmt(data.mixSkilling.locations)}</div>
-                      <div className="kpi-label">Locations</div>
-                    </div>
-                  </div>
-                  <div className="kpi-card">
-                    <div className="kpi-body">
-                      <div className="kpi-value">{formatINR(data.mixSkilling.avg_pre)}</div>
-                      <div className="kpi-label">Mean Pre Income</div>
-                      <p className="kpi-caption">Average income before training, among candidates with a recorded pre-training income (n = {formatCount(data.mixSkilling.with_pre)}).</p>
-                    </div>
-                  </div>
-                  <div className="kpi-card">
-                    <div className="kpi-body">
-                      <div className="kpi-value">{formatINR(data.mixSkilling.avg_post)}</div>
-                      <div className="kpi-label">Post Income</div>
-                      <p className="kpi-caption">(Enhancement in income status post completion of course)</p>
-                      <p className="kpi-caption">Average of candidates with a recorded income (n = {formatCount(data.mixSkilling.with_post)}). Zero and blank values are left out.</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="card-row" style={{ marginTop: '16px' }}>
-                  <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Course-wise enrolment</h3></div>
-                    <div className="card-body">
-                      <p className="chart-caption">Share of candidates on the skilling sheet. All courses are shown.</p>
-                      <EChart
-                        option={groupedBarOption(
-                          (data.mixSkilling.by_course || []).map((row) => row.label),
-                          [{ label: 'Candidates', data: (data.mixSkilling.by_course || []).map((row) => Number(row.value) || 0) }],
-                          { horizontal: true, showLabels: true, legend: false, withPercent: true, gridLeft: 180 }
-                        )}
-                        height={Math.max(280, (data.mixSkilling.by_course || []).length * 28)}
-                        focus={focus}
-                        onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
-                      />
-                    </div>
-                  </div>
-                  <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Gender-wise portfolio</h3></div>
-                    <div className="card-body">
-                      <BrandDoughnut
-                        labels={(data.mixSkilling.by_gender || []).map((row) => row.label)}
-                        values={(data.mixSkilling.by_gender || []).map((row) => row.value)}
-                        colors={(data.mixSkilling.by_gender || []).map((row) => SHEET_GENDER_COLORS[row.label])}
-                        percent
-                        onSliceClick={(label) => handleDrilldown('mix_skill_gender', label)}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="card-row" style={{ marginTop: '16px' }}>
-                  <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Post-Training Career Outcomes</h3></div>
-                    <div className="card-body">
-                      <p className="chart-caption">Current status of skilling program participants.</p>
-                      <EChart
-                        option={funnelOption(
-                          CAREER_STAGES.map((stage) => {
-                            const row = (data.mixSkilling.by_placement || []).find((item) => item.label === stage.key);
-                            return row ? { label: stage.label, value: row.value, key: stage.key, color: stage.color } : null;
-                          }).filter(Boolean),
-                          { percent: true, keepOrder: true }
-                        )}
-                        onPoint={(p) => handleDrilldown('mix_placement', p.data?.key || p.name)}
-                      />
-                    </div>
-                  </div>
-                  <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header">
-                      <h3>Income Mobility pre to post training</h3>
-                    </div>
-                    <div className="card-body">
-                      <p className="chart-caption">Change in Monthly income among participants with both pre and post training income data</p>
-                      <ColumnBar
-                        labels={(data.mixSkilling.income_change || []).filter((row) => row.label !== 'Income fell').map((row) => row.label)}
-                        series={incomeSeries((data.mixSkilling.income_change || []).filter((row) => row.label !== 'Income fell'))}
-                        axisTitle="No. of candidates"
-                        horizontal
-                        height={320}
-                        caption={`${formatCount((data.mixSkilling.income_change || []).find((row) => row.label === 'Income fell')?.value)} of ${formatCount((data.mixSkilling.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))} candidates reported a lower post income and are not shown.`}
-                        onBarClick={(label) => handleDrilldown('income_delta', label)}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {(data.mixSkilling.by_course_income || []).length > 0 && (
-                  <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Course-wise Mean Pre vs Post Income</h3>
-                    <EChart
-                      option={groupedBarOption(
-                        data.mixSkilling.by_course_income.map((r) => r.label),
-                        [
-                          { label: 'Mean pre', data: data.mixSkilling.by_course_income.map((r) => Number(r.avg_pre) || 0) },
-                          { label: 'Mean post', data: data.mixSkilling.by_course_income.map((r) => Number(r.avg_post) || 0) }
-                        ]
-                      )}
-                      focus={focus}
-                      onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
-                    />
-                  </div>
-                )}
+          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '8px 0 12px' }}>Training & Course Portfolio</h2>
+          <p className="chart-caption">Course and location counts come from the M&E field sheet. Roster, batches, and trades come from the skill-tracking app. The two sources are not merged.</p>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{fmt(data.mixSkilling?.people)}</div>
+                <div className="kpi-label"><Users size={16} style={{ marginRight: 6 }} />Total Candidates Enrolled</div>
+                <p className="kpi-caption">Rows on the M&E field sheet (n = {fmt(data.mixSkilling?.people)}). {sheetMonthNote}</p>
               </div>
             </div>
-          )}
-
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '8px 0 16px' }}>Skill roster</h3>
-          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-label"><GraduationCap size={16} style={{ marginRight: 6 }} />Skilling courses (batches)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  <div>
+                    <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.ongoing)}</div>
+                    <div className="kpi-label">Ongoing</div>
+                  </div>
+                  <div>
+                    <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.completed)}</div>
+                    <div className="kpi-label">Completed</div>
+                  </div>
+                  <div>
+                    <div className="kpi-value">{formatCount(data.sessionsByTrade?.batches?.total)}</div>
+                    <div className="kpi-label">Total</div>
+                  </div>
+                </div>
+                {(data.sessionsByTrade?.batches?.upcoming || 0) > 0 && (
+                  <p className="kpi-caption">Upcoming: {formatCount(data.sessionsByTrade.batches.upcoming)}</p>
+                )}
+                <p className="kpi-caption">
+                  Skill-tracking app batches, from start and end dates. {(data.sessionsByTrade?.batches?.no_dates || 0) > 0
+                    ? `${formatCount(data.sessionsByTrade.batches.no_dates)} with no dates.`
+                    : ''} {rosterMonthNote}
+                </p>
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{fmt(data.mixSkilling?.locations)}</div>
+                <div className="kpi-label">Locations</div>
+                <p className="kpi-caption">Distinct locations on the M&E field sheet. {sheetMonthNote}</p>
+              </div>
+            </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
               <div className="kpi-body">
                 <div className="kpi-value">{fmt(roster)}</div>
                 <div className="kpi-label">Skill roster</div>
-                <p className="kpi-caption">All years</p>
+                <p className="kpi-caption">People on the skill-tracking app (n = {fmt(roster)}). {rosterMonthNote}</p>
               </div>
             </div>
-            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
-              <div className="kpi-body">
-                <div className="kpi-value">{fmt(womenCount)}</div>
-                <div className="kpi-label">Women on roster</div>
-                <p className="kpi-caption">All years</p>
+          </div>
+
+          <div className="card-row">
+            <div className="card">
+              <div className="card-header"><h3>Course-wise enrolment</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Share of candidates on the skilling sheet. All courses are shown. {sheetMonthNote}</p>
+                <EChart
+                  option={groupedBarOption(
+                    (data.mixSkilling?.by_course || []).map((row) => row.label),
+                    [{ label: 'Candidates', data: (data.mixSkilling?.by_course || []).map((row) => Number(row.value) || 0) }],
+                    { horizontal: true, showLabels: true, legend: false, withPercent: true, gridLeft: 180 }
+                  )}
+                  height={Math.max(280, (data.mixSkilling?.by_course || []).length * 28)}
+                  focus={focus}
+                  onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
+                />
               </div>
             </div>
+            <div className="card">
+              <div className="card-header"><h3>Trade-wise candidates</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">Skill-tracking app</p>
+                <p className="chart-caption">Candidates on the skill roster, by trade. All trades are shown. {rosterMonthNote}</p>
+                <RankingBar
+                  items={(data.byTrade || []).map(r => ({ label: r.trade, value: r.count }))}
+                  maxItems={0}
+                  pareto={false}
+                  percent
+                  colors={BAR_COLORS}
+                  onBarClick={(label) => handleDrilldown('trade', label)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="card-row">
+            <div className="card">
+              <div className="card-header"><h3>Trade-wise batches</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">Skill-tracking app</p>
+                <p className="chart-caption">Each bar counts batches, not people. All trades are shown. {rosterMonthNote}</p>
+                <RankingBar
+                  items={(data.sessionsByTrade?.trades || []).map(r => ({ label: r.trade, value: r.batches }))}
+                  maxItems={0}
+                  percent
+                  colors={BAR_COLORS}
+                />
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                <h3>Skill roster candidates by {grain}</h3>
+                <span className="kpi-caption">
+                  Average per {grain}: {formatCount(data.benchmarks?.programme_average)}
+                </span>
+              </div>
+              <div className="card-body">
+                <p className="kpi-caption">Skill-tracking app</p>
+                <p className="chart-caption">
+                  Candidates on the skill roster, compared with the mean of {grain}s that have a recorded {grain}.
+                  {data.benchmarks?.unrecorded_n
+                    ? ` ${data.benchmarks.unrecorded_label} (${formatCount(data.benchmarks.unrecorded_n)}) is shown and left out of the average.`
+                    : ''}
+                  {' '}{rosterMonthNote}
+                </p>
+                <BenchmarkBar
+                  percent
+                  payload={data.benchmarks}
+                  onBarClick={(label, row) => handleDrilldown('geo', label, {
+                    grain: data.benchmarks?.grain,
+                    geo_id: row?.id || label
+                  })}
+                />
+              </div>
+            </div>
+          </div>
+
+          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '28px 0 12px' }}>Gender Inclusion</h2>
+          <div className="kpi-grid">
             {womenPct != null && (
               <div className="kpi-card">
                 <div className="kpi-body">
                   <div className="kpi-value">{womenPct}%</div>
                   <div className="kpi-label">Women participation</div>
-                  <p className="kpi-caption">Of roster headcount. All years.</p>
+                  <p className="kpi-caption">Women as a share of the skill-roster headcount (n = {fmt(roster)}). Skill-tracking app. {rosterMonthNote}</p>
                 </div>
               </div>
             )}
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
+              <div className="kpi-body">
+                <div className="kpi-value">{fmt(womenCount)}</div>
+                <div className="kpi-label">Women on roster</div>
+                <p className="kpi-caption">Female candidates on the skill roster. Skill-tracking app. {rosterMonthNote}</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-row">
+            <div className="card">
+              <div className="card-header"><h3>Gender-wise portfolio</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Gender recorded on the skilling sheet. {sheetMonthNote}</p>
+                <BrandDoughnut
+                  labels={(data.mixSkilling?.by_gender || []).map((row) => row.label)}
+                  values={(data.mixSkilling?.by_gender || []).map((row) => row.value)}
+                  colors={(data.mixSkilling?.by_gender || []).map((row) => SHEET_GENDER_COLORS[row.label])}
+                  percent
+                  onSliceClick={(label) => handleDrilldown('mix_skill_gender', label)}
+                />
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-header"><h3>Gender ratio</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">Skill-tracking app</p>
+                <p className="chart-caption">Gender on the skill roster. Blank gender is shown as Not recorded. {rosterMonthNote}</p>
+                <BrandDoughnut
+                  labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
+                  values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
+                  percent
+                  onSliceClick={(label) => handleDrilldown('gender', label)}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-header"><h3>Age brackets · roster</h3></div>
+            <div className="card-body">
+              <p className="kpi-caption">Skill-tracking app</p>
+              <p className="chart-caption">Age brackets on the skill roster. {rosterMonthNote}</p>
+              <ColumnBar
+                labels={data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : []}
+                values={data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : []}
+                onBarClick={(label) => handleDrilldown('age', label)}
+              />
+            </div>
           </div>
 
+          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '28px 0 12px' }}>Employment Outcomes</h2>
           <div className="card-row">
+            <div className="card">
+              <div className="card-header"><h3><Briefcase size={16} style={{ marginRight: 6 }} />Post-Training Career Outcomes</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Current status of skilling program participants. {sheetMonthNote}</p>
+                <EChart
+                  option={funnelOption(
+                    CAREER_STAGES.map((stage) => {
+                      const row = (data.mixSkilling?.by_placement || []).find((item) => item.label === stage.key);
+                      return row && Number(row.value) > 0 ? { label: stage.label, value: row.value, key: stage.key, color: stage.color } : null;
+                    }).filter(Boolean),
+                    { percent: true, keepOrder: true }
+                  )}
+                  onPoint={(p) => handleDrilldown('mix_placement', p.data?.key || p.name)}
+                />
+              </div>
+            </div>
             <div className="card">
               <div className="card-header"><h3>Employment outcomes of candidates</h3></div>
               <div className="card-body">
-                <p className="chart-caption">Skill-tracking follow-ups (n = {formatCount(data.beneficiaries?.monitored_people)} people). All years.</p>
+                <p className="kpi-caption">Skill-tracking app</p>
+                <p className="chart-caption">Follow-up work status (n = {formatCount(data.beneficiaries?.monitored_people)} people). {rosterMonthNote}</p>
                 <BrandDoughnut
                   labels={data.beneficiaries?.status_breakdown?.map(r => r.status) || []}
                   values={data.beneficiaries?.status_breakdown?.map(r => r.count) || []}
@@ -364,89 +466,90 @@ export default function SkillingPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '28px 0 12px' }}>Income & Livelihood Outcomes</h2>
+          <p className="chart-caption">Income figures use recorded values above zero and below ₹10,00,000. Zero and blank values are left out. {sheetMonthNote}</p>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{formatINR(data.mixSkilling?.avg_pre)}</div>
+                <div className="kpi-label">Mean Pre Income</div>
+                <p className="kpi-caption">Average income before training, among candidates with a recorded pre-training income (n = {formatCount(data.mixSkilling?.with_pre)}). M&E field sheet.</p>
+              </div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-body">
+                <div className="kpi-value">{formatINR(data.mixSkilling?.avg_post)}</div>
+                <div className="kpi-label">Post Income</div>
+                <p className="kpi-caption">Average of candidates with a recorded income (n = {formatCount(data.mixSkilling?.with_post)}). M&E field sheet. Zero and blank values are left out.</p>
+              </div>
+            </div>
+          </div>
+          <div className="card-row">
             <div className="card">
-              <div className="card-header"><h3>Field-sheet post income buckets</h3></div>
+              <div className="card-header"><h3>Income Mobility pre to post training</h3></div>
               <div className="card-body">
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Change in Monthly income among participants with both pre and post training income data</p>
                 <ColumnBar
-                  labels={['₹0–5K', '₹5K–10K', '₹10K+']}
-                  values={[data.income?.['0_5000'], data.income?.['5001_10000'], data.income?.['10001_plus']]}
-                  caption="Self-employed, working, or placed rows on the Skilling sheet. Further study and ongoing course are left out. Empty post income is omitted."
-                  onBarClick={(_, __, idx) => {
+                  labels={(data.mixSkilling?.income_change || []).filter((row) => row.label !== 'Income fell').map((row) => row.label)}
+                  series={incomeSeries((data.mixSkilling?.income_change || []).filter((row) => row.label !== 'Income fell'))}
+                  axisTitle="No. of candidates"
+                  horizontal
+                  height={320}
+                  caption={`${formatCount((data.mixSkilling?.income_change || []).find((row) => row.label === 'Income fell')?.value)} of ${formatCount((data.mixSkilling?.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))} candidates reported a lower post income and are not shown.`}
+                  onBarClick={(label) => handleDrilldown('income_delta', label)}
+                />
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-header"><h3>Post-program income ranges</h3></div>
+              <div className="card-body">
+                <p className="kpi-caption">M&E field sheet</p>
+                <EChart
+                  option={groupedBarOption(
+                    ['Up to ₹5,000', '₹5,001–10,000', 'Above ₹10,000'],
+                    [{ label: 'Candidates', data: [data.income?.['0_5000'], data.income?.['5001_10000'], data.income?.['10001_plus']] }],
+                    { horizontal: true, showLabels: true, legend: false, withPercent: true, yName: 'No. of candidates', colors: INCOME_COLORS, gridLeft: 120 }
+                  )}
+                  caption={`Self-employed, working, or placed rows with a recorded post income (n = ${formatCount(data.income?.n)}). Further study and ongoing course are left out. Zero and blank values are left out.`}
+                  onPoint={(point) => {
                     const labels = ['0_5000', '5001_10000', '10001_plus'];
-                    handleDrilldown('income_range', labels[idx]);
+                    handleDrilldown('income_range', labels[point.dataIndex]);
                   }}
                 />
               </div>
             </div>
           </div>
-
-          <div className="card-row">
+          {(data.mixSkilling?.by_course_income || []).length > 0 && (
             <div className="card">
-              <div className="card-header"><h3>Gender ratio</h3></div>
+              <div className="card-header"><h3>Course-wise Mean Pre vs Post Income</h3></div>
               <div className="card-body">
-                <p className="chart-caption">All years. Blank gender is shown as Not recorded.</p>
-                <BrandDoughnut
-                  labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
-                  values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
-                  percent
-                  onSliceClick={(label) => handleDrilldown('gender', label)}
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Mean pre (blue) and post (orange) income by course, sorted by mean post. A course with no valid pre income has no pre bar. {sheetMonthNote}</p>
+                <EChart
+                  option={courseIncomeOption(data.mixSkilling.by_course_income)}
+                  height={Math.max(280, data.mixSkilling.by_course_income.length * 36)}
+                  focus={focus}
+                  onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
                 />
               </div>
             </div>
+          )}
+          {(data.mixSkilling?.post_by_location || []).length > 0 && (
             <div className="card">
-              <div className="card-header"><h3>Age brackets · roster</h3></div>
+              <div className="card-header"><h3>Post income of candidates location-wise</h3></div>
               <div className="card-body">
-                <p className="chart-caption">All years</p>
-                <ColumnBar
-                  labels={data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : []}
-                  values={data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : []}
-                  onBarClick={(label) => handleDrilldown('age', label)}
+                <p className="kpi-caption">M&E field sheet</p>
+                <p className="chart-caption">Mean post income by location. The tooltip shows the median. Zero and blank values are left out. {sheetMonthNote}</p>
+                <EChart
+                  option={locationIncomeOption(data.mixSkilling.post_by_location)}
+                  height={Math.max(280, data.mixSkilling.post_by_location.length * 36)}
                 />
               </div>
             </div>
-          </div>
-
-          <div className="card-row">
-            <div className="card">
-              <div className="card-header"><h3>Roster by trade</h3></div>
-              <div className="card-body">
-                <p className="chart-caption">All years</p>
-                <RankingBar
-                  items={(data.byTrade || []).map(r => ({ label: r.trade, value: r.count }))}
-                  pareto
-                  onBarClick={(label) => handleDrilldown('trade', label)}
-                />
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header"><h3>Batches by trade</h3></div>
-              <div className="card-body">
-                <p className="chart-caption">All years</p>
-                <RankingBar
-                  items={(data.sessionsByTrade?.trades || []).map(r => ({ label: r.trade, value: r.batches }))}
-                  onBarClick={(label) => handleDrilldown('trade', label)}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginTop: '24px' }}>
-            <div className="card-header">
-              <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {data.benchmarks?.grain === 'district' ? 'Districts vs state and programme averages' : 'States vs programme average'}
-              </h3>
-            </div>
-            <div className="card-body">
-              <p className="chart-caption">All years. Roster geography only. Not the field sheet locations.</p>
-              <BenchmarkBar
-                payload={data.benchmarks}
-                onBarClick={(label, row) => handleDrilldown('geo', label, {
-                  grain: data.benchmarks?.grain,
-                  geo_id: row?.id || label
-                })}
-              />
-            </div>
-          </div>
+          )}
         </>
       )}
 

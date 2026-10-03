@@ -57,7 +57,8 @@ function defaultsFor(mod) {
     year: '',
     academic_year: '',
     financial_year: '',
-    gender: ''
+    gender: '',
+    month: ''
   };
   if (mod === 'health') return { ...base, year };
   if (mod === 'education') return { ...base, academic_year: fy, financial_year: fy };
@@ -93,7 +94,8 @@ function payloadFor(mod, filters) {
       state_id: filters.state_id,
       district_id: filters.district_id,
       academic_year: fy,
-      financial_year: fy
+      financial_year: fy,
+      month: filters.month || ''
     };
   }
   if (mod === 'overview') {
@@ -109,7 +111,7 @@ function payloadFor(mod, filters) {
 
 function queryFromPayload(payload) {
   const params = new URLSearchParams();
-  for (const key of ['state_id', 'district_id', 'year', 'academic_year', 'financial_year', 'gender']) {
+  for (const key of ['state_id', 'district_id', 'year', 'academic_year', 'financial_year', 'gender', 'month']) {
     if (payload[key]) params.set(key, String(payload[key]));
   }
   return params.toString();
@@ -132,6 +134,8 @@ function readUrl(searchParams, mod) {
     next.academic_year = clock;
     next.financial_year = clock;
   }
+  const month = searchParams.get('month');
+  if (month && mod === 'livelihood') next.month = month;
   return next;
 }
 
@@ -334,6 +338,11 @@ export default function GlobalFilters({ onApply }) {
     const name = districts.find((d) => String(d.id) === id)?.name || id;
     if (showLocation) chips.push({ key: 'district_id', id, label: name });
   }
+  if (moduleName === 'livelihood') {
+    for (const id of splitList(filters.month)) {
+      chips.push({ key: 'month', id, label: id });
+    }
+  }
   for (const id of splitList(filters.gender)) {
     if (showGender) chips.push({ key: 'gender', id, label: id === 'F' ? 'Female' : 'Male' });
   }
@@ -419,6 +428,17 @@ export default function GlobalFilters({ onApply }) {
                 value={filters.financial_year || filters.academic_year}
                 options={fyYears.map((fy) => ({ id: fy, name: fy }))}
                 emptyLabel="All years"
+                onChange={setField}
+              />
+            )}
+
+            {moduleName === 'livelihood' && (
+              <MultiSelect
+                label="Month"
+                name="month"
+                value={filters.month}
+                options={['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'].map((name) => ({ id: name, name }))}
+                emptyLabel="All months"
                 onChange={setField}
               />
             )}

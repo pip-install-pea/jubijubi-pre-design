@@ -174,6 +174,7 @@ export function getFiltersFromRequest(req) {
     trade: url.searchParams.get('trade') || null,
     academic_year: url.searchParams.get('academic_year') || null,
     financial_year: url.searchParams.get('financial_year') || null,
+    month: url.searchParams.get('month') || null,
     school_id: url.searchParams.get('school_id') || null,
     geo_module: url.searchParams.get('geo_module') || null,
   };

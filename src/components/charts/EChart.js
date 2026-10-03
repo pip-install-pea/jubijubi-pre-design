@@ -197,7 +197,7 @@ export function comboLineBarOption(labels, { bar, line, barName = 'Added this ye
   };
 }
 
-export function doughnutOption(items, { percent = false } = {}) {
+export function doughnutOption(items, { percent = false, pie = false } = {}) {
   const data = (items || [])
     .map((r) => ({
       name: String(r.label ?? r.name ?? 'Unknown'),
@@ -211,7 +211,7 @@ export function doughnutOption(items, { percent = false } = {}) {
     legend: { type: 'scroll', orient: 'vertical', right: 0, top: 'middle' },
     series: [{
       type: 'pie',
-      radius: ['48%', '72%'],
+      radius: pie ? '68%' : ['48%', '72%'],
       center: ['38%', '50%'],
       data,
       ...(percent ? {
@@ -251,7 +251,7 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0 } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0, colors = [] } = {}) {
   const total = (datasets || []).reduce((sum, ds) => sum + (ds.data || []).reduce((inner, n) => inner + (Number(n) || 0), 0), 0);
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
@@ -267,13 +267,19 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
       type: 'bar',
       name: ds.label,
       emphasis: { focus: 'series' },
-      data: ds.data,
+      data: (ds.data || []).map((value, index) => (
+        colors[index] && (value == null || typeof value !== 'object')
+          ? { value, itemStyle: { color: colors[index] } }
+          : value
+      )),
+      ...(ds.color ? { itemStyle: { color: ds.color } } : {}),
       ...(showLabels ? {
         label: {
           show: true,
           position: horizontal ? 'right' : 'top',
           formatter: (p) => {
-            const n = Number(p.value);
+            const raw = p.value && typeof p.value === 'object' ? p.value.value : p.value;
+            const n = Number(raw);
             if (!Number.isFinite(n)) return '';
             const count = n.toLocaleString('en-IN');
             if (!withPercent || !total) return count;

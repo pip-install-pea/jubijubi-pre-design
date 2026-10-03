@@ -19,6 +19,58 @@ export function validIncomeSql(col) {
 const SHEET_INCOME_MIN = 0;
 const SHEET_INCOME_MAX = 200000;
 
+const FY_MONTHS = [
+  ['4', 'April'], ['5', 'May'], ['6', 'June'], ['7', 'July'],
+  ['8', 'August'], ['9', 'September'], ['10', 'October'], ['11', 'November'],
+  ['12', 'December'], ['1', 'January'], ['2', 'February'], ['3', 'March']
+];
+
+export function selectedMonthNumbers(monthValue) {
+  const wanted = new Set(String(monthValue || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean));
+  if (!wanted.size) return [];
+  return FY_MONTHS
+    .filter(([num, name]) => wanted.has(num) || wanted.has(name.toLowerCase()))
+    .map(([num]) => num);
+}
+
+function fyStartYears(financialYear) {
+  return String(financialYear || '').split(',').map((item) => item.trim()).filter(Boolean).flatMap((fy) => {
+    const match = fy.match(/(\d{2,4})/);
+    if (!match) return [];
+    let year = Number(match[1]);
+    if (year < 100) year += 2000;
+    return year > 1900 ? [year] : [];
+  });
+}
+
+/** Month filter for a date column, or for the sheet's month name when textMonth is set. */
+export function monthFilterSql(column, filters, params, { textMonth = false } = {}) {
+  const nums = selectedMonthNumbers(filters?.month);
+  if (!nums.length) return null;
+  if (textMonth) {
+    const names = nums.map((num) => FY_MONTHS.find((pair) => pair[0] === num)[1]);
+    const keys = names.map((name, index) => {
+      const key = `mix_month_${index}`;
+      params[key] = name;
+      return `:${key}`;
+    });
+    return `btrim(${column}) IN (${keys.join(', ')})`;
+  }
+  const years = fyStartYears(filters?.financial_year || filters?.academic_year);
+  const pairs = years.length
+    ? nums.flatMap((num) => years.map((start) => [String(num).padStart(2, '0'), String(Number(num) >= 4 ? start : start + 1)]))
+    : nums.map((num) => [String(num).padStart(2, '0'), null]);
+  const parts = pairs.map(([month, year], index) => {
+    const monthKey = `mon_${index}`;
+    params[monthKey] = month;
+    if (!year) return `SUBSTRING(${column}::text, 6, 2) = :${monthKey}`;
+    const yearKey = `myr_${index}`;
+    params[yearKey] = year;
+    return `(SUBSTRING(${column}::text, 6, 2) = :${monthKey} AND SUBSTRING(${column}::text, 1, 4) = :${yearKey})`;
+  });
+  return `(${column}::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND ${column}::text !~ '^(0000|1970)' AND (${parts.join(' OR ')}))`;
+}
+
 function mixYearClauses(filters) {
   const year = filters?.academic_year || filters?.financial_year;
   const params = {};
@@ -76,6 +128,8 @@ function withCanonicalPlaces(rows) {
 function mixSkillingWhere(filters, { workingOnly = false } = {}) {
   const { clauses, params } = mixYearClauses(filters);
   clauses.push(`m.program_id::text = '11'`);
+  const monthClause = monthFilterSql('m.month', filters, params, { textMonth: true });
+  if (monthClause) clauses.push(monthClause);
   if (workingOnly) clauses.push(mixWorkingSql());
   return { w: whereStr(clauses), params };
 }
@@ -161,7 +215,13 @@ export async function getPlacementIndicators(filters) {
 }
 
 function lf(filters, options) {
-  return buildFilters(filters, { ...GEO, ...options });
+  const built = buildFilters(filters, { ...GEO, ...options });
+  const column = options.month_col || options.date_col;
+  if (column && /created_at|date_of_monitor|batch_start_date/.test(column) && !String(column).startsWith('em.')) {
+    const clause = monthFilterSql(column, filters, built.params);
+    if (clause) built.clauses.push(clause);
+  }
+  return built;
 }
 
 function parseSalesGeneratedAverage(raw) {
@@ -358,7 +418,8 @@ export async function getSkillingDemographics(filters) {
 export async function getBeneficiariesByTrade(filters) {
   const { clauses, params } = lf(filters, {
     state_col: 'sp.state_id',
-    district_col: 'sp.district_id'
+    district_col: 'sp.district_id',
+    month_col: 'sp.created_at'
   });
   const w = whereStr(clauses);
 
@@ -380,7 +441,8 @@ export async function getBeneficiariesByTrade(filters) {
 export async function getSessionsByTrade(filters) {
   const { clauses, params } = lf(filters, {
     state_col: 'bl.state_id',
-    district_col: 'bl.district_id'
+    district_col: 'bl.district_id',
+    month_col: 'bl.batch_start_date'
   });
   const w = whereStr(clauses);
 
@@ -402,7 +464,8 @@ export async function getSessionsByTrade(filters) {
 export async function getBatchCourseStatus(filters) {
   const { clauses, params } = lf(filters, {
     state_col: 'bl.state_id',
-    district_col: 'bl.district_id'
+    district_col: 'bl.district_id',
+    month_col: 'bl.batch_start_date'
   });
   const start = `CASE WHEN bl.batch_start_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND bl.batch_start_date::text !~ '^(0000|1970)' THEN bl.batch_start_date::date END`;
   const end = `CASE WHEN bl.batch_end_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND bl.batch_end_date::text !~ '^(0000|1970)' THEN bl.batch_end_date::date END`;
@@ -521,7 +584,7 @@ async function getSheetIncomeBuckets(filters) {
   const empty = { '0_5000': 0, '5001_10000': 0, '10001_plus': 0, source: 'education_mixprogram' };
   try {
     const { w, params } = mixSkillingWhere(filters, { workingOnly: true });
-    const post = moneySql('m.post_income');
+    const post = validIncomeSql('m.post_income');
     const rows = await fetchall(
       `SELECT
          SUM(CASE WHEN ${post} IS NOT NULL AND ${post} <= 5000 THEN 1 ELSE 0 END)::integer AS "0_5000",
@@ -532,10 +595,14 @@ async function getSheetIncomeBuckets(filters) {
       params
     );
     const r = rows[0] || {};
+    const low = Number(r['0_5000']) || 0;
+    const mid = Number(r['5001_10000']) || 0;
+    const high = Number(r['10001_plus']) || 0;
     return {
-      '0_5000': Number(r['0_5000']) || 0,
-      '5001_10000': Number(r['5001_10000']) || 0,
-      '10001_plus': Number(r['10001_plus']) || 0,
+      '0_5000': low,
+      '5001_10000': mid,
+      '10001_plus': high,
+      n: low + mid + high,
       source: 'education_mixprogram'
     };
   } catch (err) {
@@ -544,10 +611,10 @@ async function getSheetIncomeBuckets(filters) {
   }
 }
 
-export async function getYoYIncome() {
+export async function getYoYIncome(filters = {}) {
   const empty = [];
   try {
-    const { w, params } = mixSkillingWhere({}, { workingOnly: true });
+    const { w, params } = mixSkillingWhere({ month: filters?.month || null }, { workingOnly: true });
     const post = validIncomeSql('m.post_income');
     const rows = await fetchall(
       `SELECT
@@ -676,6 +743,14 @@ export async function getMarketAccessStats(filters) {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
+  const sales_by_agency = agencies.map((row) => ({
+    name: row.agency_name || 'Unknown',
+    sales: parseSalesGeneratedAverage(row.sales_generated_average),
+    band: row.sales_generated_average || '',
+    access_type: row.market_access_type || '',
+    year: row.financial_year || ''
+  })).filter((row) => row.sales != null);
+
   return {
     total_records,
     agency_count,
@@ -685,6 +760,7 @@ export async function getMarketAccessStats(filters) {
     sales_generated_average_breakdown,
     market_access_type_breakdown,
     top_agencies,
+    sales_by_agency,
     agencies
   };
 }
@@ -780,11 +856,14 @@ export async function getLivelihoodGeoBenchmarks(filters) {
           ORDER BY d.district_name LIMIT 1),
          sp.district_id::text, 'Unknown') AS label,
        sp.district_id::text AS id`
-    : `COALESCE(
-         (SELECT NULLIF(TRIM(s.state_name), '') FROM skilltracking_state s
-          WHERE s.state_id::text = sp.state_id::text
-          ORDER BY s.state_name LIMIT 1),
-         sp.state_id::text, 'Unknown') AS label,
+    : `CASE
+         WHEN sp.state_id IS NULL OR sp.state_id::text IN ('0', '') THEN 'State not recorded'
+         ELSE COALESCE(
+           (SELECT NULLIF(TRIM(s.state_name), '') FROM skilltracking_state s
+            WHERE s.state_id::text = sp.state_id::text
+            ORDER BY s.state_name LIMIT 1),
+           sp.state_id::text, 'Unknown')
+       END AS label,
        sp.state_id::text AS id`;
   const joinSql = '';
   const groupSql = grain === 'district'
@@ -808,17 +887,22 @@ export async function getLivelihoodGeoBenchmarks(filters) {
 
   try {
     const [peerRows, programmeRows] = await Promise.all([run(peerFilters), run(programmeFilters)]);
-    const stateAverage = grain === 'district' ? mean(peerRows.map((r) => r.value)) : 0;
-    const programmeAverage = mean(programmeRows.map((r) => r.value));
-    const display = (grain === 'district' ? peerRows : programmeRows).slice(0, 12);
+    const recorded = (rows) => rows.filter((row) => String(row.id) !== '0' && row.label !== 'State not recorded');
+    const stateAverage = grain === 'district' ? mean(recorded(peerRows).map((r) => r.value)) : 0;
+    const averageRows = recorded(programmeRows);
+    const programmeAverage = mean(averageRows.map((r) => r.value));
+    const unrecorded = programmeRows.find((row) => row.label === 'State not recorded');
+    const display = grain === 'district' ? peerRows : programmeRows;
     return {
       grain,
       unit: 'people',
       rows: withPeerAverages(display, stateAverage, programmeAverage),
       state_average: Number(stateAverage.toFixed(1)),
       programme_average: Number(programmeAverage.toFixed(1)),
-      programme_n: programmeRows.length,
-      state_n: grain === 'district' ? peerRows.length : 0
+      programme_n: averageRows.length,
+      state_n: grain === 'district' ? recorded(peerRows).length : 0,
+      unrecorded_label: unrecorded ? unrecorded.label : null,
+      unrecorded_n: unrecorded ? Number(unrecorded.value) || 0 : 0
     };
   } catch (err) {
     console.warn('[livelihoodAnalytics] geo benchmarks skipped:', err.message);
@@ -1280,6 +1364,8 @@ export async function getMixprogramFarmers(filters) {
 export async function getMixprogramSkilling(filters) {
   const { clauses, params } = mixYearClauses(filters);
   clauses.push(`m.program_id::text = '11'`);
+  const monthClause = monthFilterSql('m.month', filters, params, { textMonth: true });
+  if (monthClause) clauses.push(monthClause);
   const w = whereStr(clauses);
   const empty = { status: 'no_data' };
   try {
@@ -1327,15 +1413,15 @@ export async function getMixprogramSkilling(filters) {
     );
     const byCourseIncome = await fetchall(
       `SELECT COALESCE(${displaySql('m.course_name')}, 'Unknown') AS label,
-              COALESCE(AVG(${validIncomeSql('m.pre_income')}), 0) AS avg_pre,
-              COALESCE(AVG(${validIncomeSql('m.post_income')}), 0) AS avg_post,
+              CASE WHEN COUNT(${validIncomeSql('m.pre_income')}) > 0 THEN AVG(${validIncomeSql('m.pre_income')}) END AS avg_pre,
+              CASE WHEN COUNT(${validIncomeSql('m.post_income')}) > 0 THEN AVG(${validIncomeSql('m.post_income')}) END AS avg_post,
               COUNT(${validIncomeSql('m.pre_income')})::integer AS n_pre,
               COUNT(${validIncomeSql('m.post_income')})::integer AS n_post
        FROM education_mixprogram m ${w}
        GROUP BY ${foldSql('m.course_name')}
        HAVING COUNT(${validIncomeSql('m.pre_income')}) > 0
            OR COUNT(${validIncomeSql('m.post_income')}) > 0
-       ORDER BY n_post DESC, n_pre DESC`,
+       ORDER BY AVG(${validIncomeSql('m.post_income')}) DESC NULLS LAST`,
       params
     );
     const pre = validIncomeSql('m.pre_income');
@@ -1352,6 +1438,17 @@ export async function getMixprogramSkilling(filters) {
               COUNT(*)::integer AS value
        FROM education_mixprogram m ${w}
        GROUP BY ${foldSql('m.location')}, ${foldSql('m.course_name')}`,
+      params
+    );
+    const postByLocation = await fetchall(
+      `SELECT COALESCE(${displaySql('m.location')}, 'Not recorded') AS label,
+              AVG(${post}) AS avg_post,
+              PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${post}) AS median_post,
+              COUNT(${post})::integer AS n
+       FROM education_mixprogram m ${w}
+       GROUP BY ${foldSql('m.location')}
+       HAVING COUNT(${post}) > 0
+       ORDER BY AVG(${post}) DESC`,
       params
     );
     const courses = [...new Set(locCourse.map((r) => r.course))].slice(0, 10);
@@ -1373,6 +1470,12 @@ export async function getMixprogramSkilling(filters) {
       avg_post: Number(kpis[0]?.avg_post) || 0,
       by_course: byCourse,
       by_course_income: byCourseIncome,
+      post_by_location: withCanonicalPlaces(postByLocation.map((row) => ({
+        label: row.label,
+        avg_post: row.avg_post == null ? null : Math.round(Number(row.avg_post)),
+        median_post: row.median_post == null ? null : Math.round(Number(row.median_post)),
+        n: Number(row.n) || 0
+      }))),
       by_gender: byGender,
       by_placement: byPlacement,
       by_category: byCategory,
@@ -1432,8 +1535,30 @@ export async function getMixprogramDidi(filters) {
        FROM education_mixprogram m ${w} GROUP BY ${foldSql('m.location')} ORDER BY value DESC`,
       params
     );
+    const phaseLabelIncome = phaseLabelSql('m.phase');
     const preInd = validIncomeSql('m.pre_income_individual');
     const postInd = validIncomeSql('m.post_income_individual');
+    const byPhaseIncome = await fetchall(
+      `SELECT ${phaseLabelIncome} AS label,
+              CASE WHEN COUNT(${preInd}) > 0 THEN AVG(${preInd}) END AS avg_pre,
+              COUNT(${preInd})::integer AS n_pre,
+              CASE WHEN COUNT(${postInd}) > 0 THEN AVG(${postInd}) END AS avg_post,
+              COUNT(${postInd})::integer AS n_post
+       FROM education_mixprogram m ${w}
+       GROUP BY 1
+       ORDER BY CASE
+         WHEN ${phaseLabelIncome} ~ '^Phase [0-9]+$' THEN substring(${phaseLabelIncome} from '[0-9]+')::integer
+         ELSE 999
+       END, 1`,
+      params
+    );
+    const byDuration = await fetchall(
+      `SELECT COALESCE(NULLIF(btrim(m.mix_duration), ''), 'Not recorded') AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w}
+       GROUP BY 1
+       ORDER BY value DESC`,
+      params
+    );
     const incomeChange = await incomeChangeBuckets(
       preInd,
       postInd,
@@ -1452,6 +1577,14 @@ export async function getMixprogramDidi(filters) {
       avg_pre_ind: Number(kpis[0]?.avg_pre_ind) || 0,
       avg_post_ind: Number(kpis[0]?.avg_post_ind) || 0,
       by_phase: byPhase,
+      by_phase_income: byPhaseIncome.map((row) => ({
+        label: row.label,
+        avg_pre: row.n_pre ? Math.round(Number(row.avg_pre)) : null,
+        n_pre: Number(row.n_pre) || 0,
+        avg_post: row.n_post ? Math.round(Number(row.avg_post)) : null,
+        n_post: Number(row.n_post) || 0
+      })),
+      by_duration: byDuration,
       by_type: byType,
       by_gender: byGender,
       by_location: withCanonicalPlaces(mergeSimilarLabels(byLocation)),

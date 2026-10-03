@@ -2,15 +2,43 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Handshake, Storefront } from '@phosphor-icons/react';
 import RankingBar from '../../../components/charts/RankingBar';
 import BrandLine from '../../../components/charts/BrandLine';
 import ColumnBar from '../../../components/charts/ColumnBar';
+import { formatCount, formatINR, formatINRFull } from '../../../lib/format';
 import EChart, {
   roseOption,
   groupedBarOption
 } from '../../../components/charts/EChart';
 import FarmerGrowth from '../../../components/charts/FarmerGrowth';
 import DrilldownModal from '../../../components/DrilldownModal';
+
+function phaseIncomeOption(rows) {
+  const list = rows || [];
+  const option = groupedBarOption(
+    list.map((row) => row.label),
+    [
+      { label: 'Mean pre individual', data: list.map((row) => (row.n_pre ? row.avg_pre : null)), color: '#1d4ed8' },
+      { label: 'Mean post individual', data: list.map((row) => (row.n_post ? row.avg_post : null)), color: '#f97316' }
+    ],
+    { showLabels: true }
+  );
+  option.series.forEach((series, seriesIndex) => {
+    series.label = {
+      show: true,
+      position: 'top',
+      formatter: (point) => {
+        const row = list[point.dataIndex] || {};
+        const n = seriesIndex === 0 ? row.n_pre : row.n_post;
+        const raw = point.value && typeof point.value === 'object' ? point.value.value : point.value;
+        if (!Number.isFinite(Number(raw))) return '';
+        return `${formatINR(raw)} (n=${formatCount(n)})`;
+      }
+    };
+  });
+  return option;
+}
 
 export default function EnterprisePage() {
   const [data, setData] = useState(null);
@@ -66,7 +94,9 @@ export default function EnterprisePage() {
   }, [fetchData]);
 
   const fmt = (n) => (n || n === 0) ? Number(n).toLocaleString('en-IN') : '—';
-  const fmtINR = (n) => (n || n === 0) ? `₹${Number(n).toLocaleString('en-IN')}` : '—';
+  const monthGap = filters.month
+    ? <p className="chart-caption">Month filter not available for this data</p>
+    : null;
 
   const handleDrilldown = (type, value = null) => {
     setModal({
@@ -94,11 +124,13 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Jubifarm farmers</h3>
               </div>
               <div className="card-body">
-                <p className="chart-caption">Each year is a running total, not new farmers only.</p>
+                {monthGap}
+                <p className="chart-caption">Each year is a running total of farmers on the field sheet, not new farmers only.</p>
                 <FarmerGrowth
                   byYear={data.farmers.by_year || []}
                   locationsByYear={data.farmers.locations_by_year || {}}
                   onYearClick={(year) => handleDrilldown('mix_farmer_year', year)}
+                  showIcon
                 />
               </div>
             </div>
@@ -110,6 +142,7 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki dukan</h3>
               </div>
               <div className="card-body">
+                {monthGap}
                 <p className="chart-caption">No outside funding – completely by JBF</p>
                 <div className="kpi-grid">
                   <div className="kpi-card">
@@ -122,26 +155,26 @@ export default function EnterprisePage() {
                   <div className="kpi-card">
                     <div className="kpi-body">
                       <div className="kpi-label">Training duration (days)</div>
-                      {(data.didi.by_type || []).map((row) => (
+                      {(data.didi.by_duration || []).map((row) => (
                         <p key={row.label} className="kpi-caption">{row.label}: {fmt(row.value)}</p>
                       ))}
                     </div>
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_pre_ind || 0))}</div>
+                      <div className="kpi-value">{formatINR(data.didi.avg_pre_ind)}</div>
                       <div className="kpi-label">Mean pre individual</div>
                     </div>
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_post_ind || 0))}</div>
+                      <div className="kpi-value">{formatINR(data.didi.avg_post_ind)}</div>
                       <div className="kpi-label">Mean post individual</div>
                     </div>
                   </div>
                   <div className="kpi-card">
                     <div className="kpi-body">
-                      <div className="kpi-value">{fmtINR(Math.round(data.didi.avg_post || 0))}</div>
+                      <div className="kpi-value">{formatINR(data.didi.avg_post)}</div>
                       <div className="kpi-label">Mean post household</div>
                     </div>
                   </div>
@@ -159,6 +192,11 @@ export default function EnterprisePage() {
                         height={360}
                         caption="Counted per phase; a woman in more than one phase is counted in each."
                         onPoint={(p) => p.name && handleDrilldown('mix_didi_phase', p.name)}
+                      />
+                      <EChart
+                        option={phaseIncomeOption(data.didi.by_phase_income)}
+                        height={320}
+                        caption="Mean individual income by phase. A phase with no recorded pre income shows no pre bar (no pre data). Values are not labelled monthly or annual."
                       />
                     </div>
                   </div>
@@ -238,6 +276,8 @@ export default function EnterprisePage() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Enterprise members</h3></div>
             <div className="card-body">
+              {monthGap}
+              <p className="chart-caption">Members recorded in enterprise support. Active means status 1.</p>
               <div className="kpi-grid">
                 <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('enterprise_total')}>
                   <div className="kpi-body">
@@ -275,51 +315,58 @@ export default function EnterprisePage() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Market access</h3></div>
             <div className="card-body">
+              {monthGap}
               <div className="kpi-grid">
                 <div className="kpi-card">
                   <div className="kpi-body">
                     <div className="kpi-value">{fmt(data.market?.total_records)}</div>
-                    <div className="kpi-label">Market access records</div>
+                    <div className="kpi-label"><Storefront size={16} style={{ marginRight: 6 }} />Market access records</div>
+                    <p className="kpi-caption">Rows in the market-access list.</p>
                   </div>
                 </div>
                 <div className="kpi-card">
                   <div className="kpi-body">
                     <div className="kpi-value">{fmt(data.market?.agency_count)}</div>
-                    <div className="kpi-label">Unique agencies</div>
+                    <div className="kpi-label"><Handshake size={16} style={{ marginRight: 6 }} />Unique agencies</div>
+                    <p className="kpi-caption">Distinct agency names on those rows.</p>
                   </div>
                 </div>
                 <div className="kpi-card">
                   <div className="kpi-body">
-                    <div className="kpi-value">{fmtINR(data.market?.total_sales_generated)}</div>
+                    <div className="kpi-value">{formatINR(data.market?.total_sales_generated)}</div>
                     <div className="kpi-label">Sales estimate</div>
+                    <p className="kpi-caption">Sum of the agencies' reported average sales.</p>
                   </div>
                 </div>
               </div>
-
-              <div className="card-row" style={{ marginTop: '16px' }}>
-                <div className="card" style={{ flex: 1 }}>
-                  <div className="card-header"><h3>Agencies</h3></div>
-                  <div className="card-body">
-                    <RankingBar
-                      items={(data.market?.top_agencies || []).map(r => ({ label: r.name, value: r.count }))}
-                    />
-                  </div>
-                </div>
-                <div className="card" style={{ flex: 1 }}>
-                  <div className="card-header"><h3>Access types</h3></div>
-                  <div className="card-body">
-                    <RankingBar
-                      items={(data.market?.market_access_type_breakdown || []).map(r => ({ label: r.market_access_type, value: r.count }))}
-                    />
-                  </div>
-                </div>
-              </div>
+              <EChart
+                option={{
+                  ...groupedBarOption(
+                    (data.market?.sales_by_agency || []).map((row) => row.name),
+                    [{ label: 'Reported sales', data: (data.market?.sales_by_agency || []).map((row) => row.sales) }],
+                    { horizontal: true, showLabels: true, legend: false, gridLeft: 140 }
+                  ),
+                  tooltip: {
+                    trigger: 'axis',
+                    renderMode: 'richText',
+                    formatter: (items) => {
+                      const item = Array.isArray(items) ? items[0] : items;
+                      const row = (data.market?.sales_by_agency || []).find((agency) => agency.name === item?.name) || {};
+                      return [item?.name, formatINRFull(row.sales), row.band, row.access_type].filter(Boolean).join('\n');
+                    }
+                  }
+                }}
+                height={220}
+                caption="Sales as reported (text bands), FY 2025-26"
+              />
             </div>
           </div>
 
           <div className="card">
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>FY profit</h3></div>
             <div className="card-body">
+              {monthGap}
+              <p className="chart-caption">Profit recorded on enterprise monitoring, by financial year.</p>
               <div className="kpi-grid" style={{ marginBottom: '20px' }}>
                 <div className="kpi-card">
                   <div className="kpi-body">
@@ -329,7 +376,7 @@ export default function EnterprisePage() {
                 </div>
                 <div className="kpi-card">
                   <div className="kpi-body">
-                    <div className="kpi-value">{fmtINR(data.funding?.latest_fy_profit)}</div>
+                    <div className="kpi-value">{formatINR(data.funding?.latest_fy_profit)}</div>
                     <div className="kpi-label">Latest FY profit</div>
                   </div>
                 </div>

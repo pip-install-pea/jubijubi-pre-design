@@ -5,7 +5,7 @@ import EChart, { groupedBarOption } from './EChart';
 import { NAVY, SKY, GOLD, LIME, hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
+export default function BenchmarkBar({ payload, title, caption, onBarClick, percent = false }) {
   const rows = payload?.rows || [];
   const labels = rows.map((r) => r.label);
   const values = rows.map((r) => Number(r.value) || 0);
@@ -72,6 +72,16 @@ export default function BenchmarkBar({ payload, title, caption, onBarClick }) {
             color: progAvg > 0 && Number(row.value) >= progAvg ? LIME : NAVY
           }
         })),
+        label: percent ? {
+          show: true,
+          position: 'right',
+          formatter: (item) => {
+            const n = Number(item.value) || 0;
+            const sum = values.reduce((total, value) => total + value, 0);
+            const pct = sum ? ((n / sum) * 100).toFixed(1) : '0.0';
+            return `${n.toLocaleString('en-IN')} (${pct}%)`;
+          }
+        } : undefined,
         markLine: markLineData.length ? { symbol: 'none', data: markLineData } : undefined
       }]
     };

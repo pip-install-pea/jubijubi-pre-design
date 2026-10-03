@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
-import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql, validIncomeSql, incomeDeltaSql } from '@/lib/livelihoodAnalytics.js';
+import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql, validIncomeSql, incomeDeltaSql, monthFilterSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -15,6 +15,22 @@ import {
   SKILL_STATE_BARE,
   resolveGeoId
 } from '@/lib/geoLookups.js';
+
+function livelihoodFilters(filters, options) {
+  const built = livelihoodFilters(filters, options);
+  const column = options.date_col;
+  if (column && /created_at|date_of_monitor|batch_start_date/.test(column) && !String(column).startsWith('em.')) {
+    const clause = monthFilterSql(column, filters, built.params);
+    if (clause) built.clauses.push(clause);
+  }
+  return built;
+}
+
+function sheetMonth(filters) {
+  const params = {};
+  const clause = monthFilterSql('m.month', filters, params, { textMonth: true });
+  return clause ? { clauses: [clause], params } : { clauses: [], params: {} };
+}
 
 const F_PERSON_SP = {
   person_id: 'sp.person_id',
@@ -93,7 +109,6 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const drillType = searchParams.get('type') || 'persons';
     const value = searchParams.get('value') || '';
-    const placedOnly = searchParams.get('placed_only') === '1';
     const q = searchParams.get('q') || '';
     
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -106,7 +121,7 @@ export async function GET(req) {
     let total = 0;
 
     if (drillType === 'work_status' || drillType === 'placement_status') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sm.state_id',
         district_col: 'sm.district_id',
         date_col: 'sm.date_of_monitor'
@@ -170,21 +185,52 @@ export async function GET(req) {
         { key: "date_of_monitor", label: "Monitored On" },
       ];
 
-    } else if (drillType === 'income_range') {
-      const post = `CASE WHEN btrim(COALESCE(m.post_income::text, '')) ~ '^[0-9]+(\\.[0-9]+)?' THEN btrim(m.post_income::text)::numeric END`;
-      let band = `${post} IS NOT NULL AND ${post} <= 5000`;
-      if (value.includes('5K–10K') || value.includes('5001')) {
-        band = `${post} BETWEEN 5001 AND 10000`;
-      } else if (value.includes('10K') || value.includes('10001')) {
-        band = `${post} > 10000`;
-      }
+    } else if (drillType === 'mix_employer') {
+      const sources = (searchParams.get('sources') || '').split('\u001e').filter(Boolean);
+      const month = sheetMonth(filters);
       const payload = await queryMixRows({
         searchParams,
         year: filters.academic_year || filters.financial_year,
         q,
         page,
         perPage,
-        extraClauses: [`m.program_id::text = '11'`, mixWorkingSql(), band],
+        extraClauses: [
+          `m.program_id::text = '11'`,
+          sources.length ? `btrim(m.placement_status) = ANY(:employer_sources::text[])` : 'FALSE',
+          ...month.clauses
+        ],
+        extraParams: { ...month.params, employer_sources: sources },
+        qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q OR m.placement_status ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
+          COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+          m.year, m.placement_status, m.post_income`,
+        columns: [
+          { key: 'course_name', label: 'Course' },
+          { key: 'location', label: 'Location' },
+          { key: 'year', label: 'Year' },
+          { key: 'placement_status', label: 'Placement status' },
+          { key: 'post_income', label: 'Post income' }
+        ]
+      });
+      return NextResponse.json(payload);
+
+    } else if (drillType === 'income_range') {
+      const post = validIncomeSql('m.post_income');
+      let band = `${post} IS NOT NULL AND ${post} <= 5000`;
+      if (value.includes('5K–10K') || value.includes('5001')) {
+        band = `${post} BETWEEN 5001 AND 10000`;
+      } else if (value.includes('10K') || value.includes('10001')) {
+        band = `${post} > 10000`;
+      }
+      const month = sheetMonth(filters);
+      const payload = await queryMixRows({
+        searchParams,
+        year: filters.academic_year || filters.financial_year,
+        q,
+        page,
+        perPage,
+        extraClauses: [`m.program_id::text = '11'`, mixWorkingSql(), band, ...month.clauses],
+        extraParams: month.params,
         qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
         selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
           COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
@@ -201,7 +247,7 @@ export async function GET(req) {
       return NextResponse.json(payload);
 
     } else if (drillType === 'income_range_legacy') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sm.state_id',
         district_col: 'sm.district_id',
         date_col: 'sm.date_of_monitor'
@@ -252,7 +298,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'trade') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sp.state_id',
         district_col: 'sp.district_id',
         date_col: 'sp.created_at'
@@ -322,7 +368,7 @@ export async function GET(req) {
       return NextResponse.json(payload);
 
     } else if (drillType === 'placement_year_legacy') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sm.state_id',
         district_col: 'sm.district_id',
         date_col: 'sm.date_of_monitor'
@@ -366,7 +412,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'gender') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sp.state_id',
         district_col: 'sp.district_id',
         date_col: 'sp.created_at',
@@ -414,7 +460,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'age') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sp.state_id',
         district_col: 'sp.district_id',
         date_col: 'sp.created_at',
@@ -474,7 +520,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'enterprise_total' || drillType === 'enterprise_active' || drillType === 'enterprise_districts') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'es.state_id',
         district_col: 'es.district_id',
         module: 'livelihood'
@@ -517,7 +563,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'enterprise_monitored') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'es.state_id',
         district_col: 'es.district_id',
         date_col: 'em.created_at'
@@ -557,7 +603,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'enterprise_fy_profit') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'es.state_id',
         district_col: 'es.district_id',
         date_col: 'em.created_at'
@@ -601,7 +647,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'pre_post') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'state_id',
         district_col: 'district_id'
       });
@@ -642,7 +688,7 @@ export async function GET(req) {
       ];
 
     } else if (drillType === 'market_access') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'state_id',
         district_col: 'district_id'
       });
@@ -689,7 +735,7 @@ export async function GET(req) {
           ? { district_id: geoId }
           : { state_id: geoId, district_id: null })
       };
-      const { clauses, params } = buildFilters(scoped, {
+      const { clauses, params } = livelihoodFilters(scoped, {
         state_col: 'sp.state_id',
         district_col: 'sp.district_id',
         date_col: 'sp.created_at',
@@ -727,7 +773,7 @@ export async function GET(req) {
 
     } else if (drillType === 'funnel') {
       if (value === 'roster') {
-        const { clauses, params } = buildFilters(filters, {
+        const { clauses, params } = livelihoodFilters(filters, {
           state_col: 'skilltracking_persons.state_id',
           district_col: 'skilltracking_persons.district_id',
           date_col: 'skilltracking_persons.created_at',
@@ -787,7 +833,7 @@ export async function GET(req) {
         });
         return NextResponse.json(payload);
       } else {
-        const { clauses, params } = buildFilters(filters, {
+        const { clauses, params } = livelihoodFilters(filters, {
           state_col: 'sm.state_id',
           district_col: 'sm.district_id',
           date_col: 'sm.date_of_monitor',
@@ -841,9 +887,10 @@ export async function GET(req) {
           `m.program_id::text = '11'`,
           `${pre} IS NOT NULL`,
           `${post} IS NOT NULL`,
-          value ? `${bucket} = :drill_value` : 'TRUE'
+          value ? `${bucket} = :drill_value` : 'TRUE',
+          ...sheetMonth(filters).clauses
         ],
-        extraParams: value ? { drill_value: value } : {},
+        extraParams: { ...(value ? { drill_value: value } : {}), ...sheetMonth(filters).params },
         qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
         selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
           COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
@@ -859,7 +906,7 @@ export async function GET(req) {
       return NextResponse.json(payload);
 
     } else if (drillType === 'time_to_placement') {
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'state_id',
         district_col: 'district_id',
         date_col: 'date_of_monitor',
@@ -908,7 +955,7 @@ export async function GET(req) {
 
     } else if (!String(drillType).startsWith('mix_')) {
       // Default: persons list
-      const { clauses, params } = buildFilters(filters, {
+      const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'skilltracking_persons.state_id',
         district_col: 'skilltracking_persons.district_id',
         trade_col: 'skilltracking_persons.training_stream_id',
@@ -953,6 +1000,7 @@ export async function GET(req) {
       const year = filters.academic_year || filters.financial_year;
       const location = searchParams.get('location') || '';
       const mixCommon = { year, q, page, perPage };
+      const month = sheetMonth(filters);
       if (drillType === 'mix_skill_heat') {
         const payload = await queryMixRows({
         searchParams,
@@ -960,9 +1008,10 @@ export async function GET(req) {
           extraClauses: [
             `m.program_id::text = '11'`,
             eqFold('m.course_name', 'drill_value'),
-            location ? eqFold('m.location', 'location') : 'TRUE'
+            location ? eqFold('m.location', 'location') : 'TRUE',
+            ...month.clauses
           ],
-          extraParams: { drill_value: value, location },
+          extraParams: { drill_value: value, location, ...month.params },
           qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
             COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
@@ -1002,8 +1051,8 @@ export async function GET(req) {
                   : (field === 'location' || field === 'course_name'
                     ? eqFold(`m.${field}`, 'drill_value')
                     : eqSoft(`m.${field}`, 'drill_value'))
-          ],
-          extraParams: { drill_value: value },
+          , ...month.clauses],
+          extraParams: { drill_value: value, ...month.params },
           qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
             COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,

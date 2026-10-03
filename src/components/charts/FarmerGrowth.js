@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import { Plant } from '@phosphor-icons/react';
 import EChart, { comboLineBarOption, groupedBarOption } from './EChart';
 
 function fmt(n) {
@@ -11,7 +12,8 @@ export default function FarmerGrowth({
   byYear = [],
   locationsByYear = {},
   onLocationClick,
-  onYearClick
+  onYearClick,
+  showIcon = false
 }) {
   const years = byYear.map((r) => r.year);
   const [selected, setSelected] = useState(years[years.length - 1] || '');
@@ -69,13 +71,13 @@ export default function FarmerGrowth({
           <div className="kpi-card">
             <div className="kpi-body">
               <div className="kpi-value">{fmt(current.stock)}</div>
-              <div className="kpi-label">Running total in {current.year}</div>
+              <div className="kpi-label">{showIcon && <Plant size={16} style={{ marginRight: 6 }} />}Running total in {current.year}</div>
             </div>
           </div>
           <div className="kpi-card">
             <div className="kpi-body">
               <div className="kpi-value">{current.opening ? fmt(current.stock) : fmt(current.added)}</div>
-              <div className="kpi-label">{current.opening ? 'Opening count' : 'Added since previous year'}</div>
+              <div className="kpi-label">{showIcon && <Plant size={16} style={{ marginRight: 6 }} />}{current.opening ? 'Opening count' : 'Added since previous year'}</div>
             </div>
           </div>
           {current.dropped > 0 && (

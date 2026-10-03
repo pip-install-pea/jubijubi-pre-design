@@ -13,7 +13,7 @@ function rankItems(items, maxItems) {
 
   const grandTotal = source.reduce((s, r) => s + r.value, 0);
   const sorted = [...source].sort((a, b) => b.value - a.value);
-  const ranked = sorted.length <= maxItems
+  const ranked = !maxItems || sorted.length <= maxItems
     ? sorted
     : [
       ...sorted.slice(0, maxItems - 1),
@@ -30,6 +30,8 @@ export default function RankingBar({
   caption,
   maxItems = 12,
   pareto = false,
+  percent = false,
+  colors = [],
   focus = []
 }) {
   const { ranked, grandTotal } = useMemo(() => rankItems(items, maxItems), [items, maxItems]);
@@ -59,8 +61,8 @@ export default function RankingBar({
         ]
       };
     }
-    return groupedBarOption(labels, [{ label: 'Count', data: values }], { horizontal: true });
-  }, [grandTotal, labels, pareto, values]);
+    return groupedBarOption(labels, [{ label: 'Count', data: values }], { horizontal: true, showLabels: percent, legend: false, withPercent: percent, gridLeft: 160, colors });
+  }, [colors, grandTotal, labels, pareto, percent, values]);
 
   if (!option) return <ChartEmpty caption={caption} />;
 

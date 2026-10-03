@@ -2,19 +2,22 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Briefcase, Users } from '@phosphor-icons/react';
 import BrandDoughnut from '../../../components/charts/BrandDoughnut';
 import ColumnBar from '../../../components/charts/ColumnBar';
 import FunnelBars from '../../../components/charts/FunnelBars';
-import EChart, { comboLineBarOption } from '../../../components/charts/EChart';
+import EChart, { comboLineBarOption, groupedBarOption } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
 import { formatCount, formatINR, formatPercent } from '../../../lib/format';
 
-function Indicator({ value, title, text, note }) {
+const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
+
+function Indicator({ value, title, text, note, icon }) {
   return (
     <div className="kpi-card">
       <div className="kpi-body">
         <div className="kpi-value">{value}</div>
-        <div className="kpi-label">{title}</div>
+        <div className="kpi-label">{icon}{title}</div>
         <p className="kpi-caption">{text}</p>
         {note && <p className="kpi-caption">{note}</p>}
       </div>
@@ -68,7 +71,6 @@ export default function PlacementPage() {
   }, [fetchData]);
 
   const fmt = (n) => (n || n === 0) ? Number(n).toLocaleString('en-IN') : '—';
-  const fmtINR = (n) => (n || n === 0) ? `₹${Number(n).toLocaleString('en-IN')}` : '—';
 
   const handleDrilldown = (type, value = null, extraParams = {}) => {
     setModal({
@@ -93,11 +95,13 @@ export default function PlacementPage() {
           {data.indicators?.status === 'ok' && (
             <div className="kpi-grid">
               <Indicator
+                icon={<Users size={16} style={{ marginRight: 6 }} />}
                 value={formatCount(data.indicators.trained)}
                 title="Candidates Trained"
                 text="Number of candidates who completed the training"
               />
               <Indicator
+                icon={<Briefcase size={16} style={{ marginRight: 6 }} />}
                 value={formatCount(data.indicators.placed)}
                 title="Candidates Placed"
                 text="Number of candidates who secured employment"
@@ -171,8 +175,9 @@ export default function PlacementPage() {
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
-                <div className="kpi-value">{fmtINR(data.yoy?.[data.yoy.length - 1]?.median_income)}</div>
+                <div className="kpi-value">{formatINR(data.yoy?.[data.yoy.length - 1]?.median_income)}</div>
                 <div className="kpi-label">Typical post income</div>
+                <p className="kpi-caption">Median post income in the latest year on the chart. Zero and blank values are left out.</p>
               </div>
             </div>
           </div>
@@ -200,19 +205,69 @@ export default function PlacementPage() {
               </div>
             </div>
             <div className="card">
-              <div className="card-header"><h3>Field-sheet post income</h3></div>
+              <div className="card-header"><h3>Post-training income of placed candidates</h3></div>
               <div className="card-body">
-                <ColumnBar
-                  labels={['₹0–5K', '₹5K–10K', '₹10K+']}
-                  values={[data.incomeRange?.['0_5000'], data.incomeRange?.['5001_10000'], data.incomeRange?.['10001_plus']]}
-                  onBarClick={(_, __, idx) => {
+                <EChart
+                  option={groupedBarOption(
+                    ['Up to ₹5,000', '₹5,001–10,000', 'Above ₹10,000'],
+                    [{ label: 'Candidates', data: [data.incomeRange?.['0_5000'], data.incomeRange?.['5001_10000'], data.incomeRange?.['10001_plus']] }],
+                    { horizontal: true, showLabels: true, legend: false, withPercent: true, yName: 'No. of candidates', colors: INCOME_COLORS, gridLeft: 120 }
+                  )}
+                  caption={`Placed candidates with a recorded post income (n = ${formatCount(data.incomeRange?.n)}). Zero and blank values are left out.`}
+                  onPoint={(point) => {
                     const labels = ['0_5000', '5001_10000', '10001_plus'];
-                    handleDrilldown('income_range', labels[idx], { placed_only: '1' });
+                    handleDrilldown('income_range', labels[point.dataIndex], { placed_only: '1' });
                   }}
                 />
               </div>
             </div>
           </div>
+
+          {data.indicators?.employers && (
+            <div className="card" style={{ marginTop: '24px' }}>
+              <div className="card-header"><h3>Companies where candidates are placed</h3></div>
+              <div className="card-body">
+                <BrandDoughnut
+                  pie
+                  percent
+                  labels={(() => {
+                    const named = data.indicators.employers.employers || [];
+                    const rest = named.slice(8);
+                    return [
+                      ...named.slice(0, 8).map((row) => row.name),
+                      ...(rest.length ? [`Other employers (${rest.length})`] : [])
+                    ];
+                  })()}
+                  values={(() => {
+                    const named = data.indicators.employers.employers || [];
+                    const rest = named.slice(8);
+                    return [
+                      ...named.slice(0, 8).map((row) => row.count),
+                      ...(rest.length ? [rest.reduce((sum, row) => sum + row.count, 0)] : [])
+                    ];
+                  })()}
+                  onSliceClick={(label) => {
+                    const named = data.indicators.employers.employers || [];
+                    const top = named.slice(0, 8);
+                    const rest = named.slice(8);
+                    const slice = label.startsWith('Other employers')
+                      ? { sources: rest.flatMap((row) => row.sources) }
+                      : top.find((row) => row.name === label);
+                    handleDrilldown('mix_employer', label, { sources: (slice?.sources || []).join('\u001e') });
+                  }}
+                />
+                <p className="chart-caption">
+                  Employers named in the placement-status text. Placed with no employer named: {formatCount(
+                    [...(data.indicators.employers.role_only || []), ...(data.indicators.employers.generic || [])]
+                      .reduce((sum, row) => sum + (Number(row.count) || 0), 0)
+                  )}.
+                  {(data.indicators.employers.unmapped || []).length
+                    ? ` Unmapped texts remain visible: ${data.indicators.employers.unmapped.map((row) => `${row.text} (${formatCount(row.count)})`).join(', ')}.`
+                    : ''}
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="card" style={{ marginTop: '24px' }}>
             <div className="card-header"><h3>Skilling → placement → income</h3></div>
