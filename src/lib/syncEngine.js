@@ -451,6 +451,17 @@ export async function ensureEnvelopeTables() {
           WHERE b.id = a.program_id || '_' || a.id
         )
     `);
+    await pool.query(`
+      DELETE FROM education_mixprogram AS a
+      WHERE a.program_id IS NOT NULL
+        AND BTRIM(a.program_id) <> ''
+        AND a.id IS NOT NULL
+        AND a.id NOT LIKE a.program_id || '_%'
+        AND EXISTS (
+          SELECT 1 FROM education_mixprogram b
+          WHERE b.id = a.program_id || '_' || a.id
+        )
+    `);
   } catch (err) {
     console.warn('[syncEngine] mixprogram id namespace skipped:', err.message);
   }
