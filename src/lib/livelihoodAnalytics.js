@@ -1,7 +1,7 @@
 import { fetchall, scalar } from './db.js';
 import { bindIn, buildFilters, financialYearAliases, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
 import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
-import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
+import { foldSql, foldKey, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 
 const GEO = { module: 'livelihood' };
 
@@ -35,14 +35,25 @@ export function placementStatusSql(col = 'm.placement_status') {
   END`;
 }
 
-export function mixWorkingSql() {
-  return `(
-    LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) IN (
-      'working', 'placed', 'employed', 'self employment', 'self employement'
-    )
-    OR LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) LIKE 'working%'
-    OR LOWER(BTRIM(COALESCE(m.placement_status::text, ''))) LIKE 'self employ%'
-  )`;
+export function mixWorkingSql(col = 'm.placement_status') {
+  return `(${placementStatusSql(col)} IN ('Working', 'Self employment'))`;
+}
+
+/** Sheet and roster spellings collapse to Female, Male, Others, or Not recorded. */
+export function genderBucketSql(col) {
+  const raw = `lower(regexp_replace(btrim(COALESCE(${col}::text, '')), '\\s+', ' ', 'g'))`;
+  return `CASE
+    WHEN ${raw} IN ('f', 'female', 'woman', 'women', 'girl') THEN 'Female'
+    WHEN ${raw} IN ('m', 'male', 'man', 'men', 'boy') THEN 'Male'
+    WHEN ${raw} IN ('other', 'others', 'o') THEN 'Others'
+    ELSE 'Not recorded'
+  END`;
+}
+
+function withCanonicalPlaces(rows) {
+  return (rows || []).map((row) => (
+    foldKey(row.label) === 'joya' ? { ...row, label: 'Joya' } : row
+  ));
 }
 
 function mixSkillingWhere(filters, { workingOnly = false } = {}) {
@@ -178,11 +189,11 @@ export async function getSkillingDemographics(filters) {
 
   const genderRows = await fetchall(
     `SELECT
-       COALESCE(sp.gender, 'Unknown') AS gender,
+       ${genderBucketSql('sp.gender')} AS gender,
        COUNT(*)::integer              AS cnt
      FROM skilltracking_persons sp
      ${w}
-     GROUP BY sp.gender
+     GROUP BY 1
      ORDER BY cnt DESC`,
     params
   );
@@ -959,7 +970,7 @@ export async function getMixprogramFarmers(filters) {
         params
       );
       farmers = Number(kpis[0]?.farmers) || 0;
-      byLocation = mergeSimilarLabels(byLocation.filter((r) => Number(r.value) > 0));
+      byLocation = withCanonicalPlaces(mergeSimilarLabels(byLocation.filter((r) => Number(r.value) > 0)));
       locations = byLocation.length;
     } catch (err) {
       console.warn('[livelihoodAnalytics] mixprogram farmers columns skipped:', err.message);
@@ -995,7 +1006,7 @@ export async function getMixprogramFarmers(filters) {
         locByPid[row.program_id].push({ label: row.label, value: Number(row.value) || 0 });
       }
       Object.keys(locByPid).forEach((pid) => {
-        locByPid[pid] = mergeSimilarLabels(locByPid[pid]);
+        locByPid[pid] = withCanonicalPlaces(mergeSimilarLabels(locByPid[pid]));
       });
       other = otherPrograms.map((p) => ({
         program_id: p.program_id,
@@ -1058,9 +1069,9 @@ export async function getMixprogramSkilling(filters) {
       params
     );
     const byGender = await fetchall(
-      `SELECT COALESCE(${displaySql('m.person_gender')}, 'Unknown') AS label, COUNT(*)::integer AS value
+      `SELECT ${genderBucketSql('m.person_gender')} AS label, COUNT(*)::integer AS value
        FROM education_mixprogram m ${w}
-       GROUP BY ${softFoldSql('m.person_gender')} ORDER BY value DESC`,
+       GROUP BY 1 ORDER BY value DESC`,
       params
     );
     const byPlacement = await fetchall(
@@ -1167,8 +1178,8 @@ export async function getMixprogramDidi(filters) {
       params
     );
     const byGender = await fetchall(
-      `SELECT COALESCE(${displaySql('m.person_gender')}, 'Unknown') AS label, COUNT(*)::integer AS value
-       FROM education_mixprogram m ${w} GROUP BY ${softFoldSql('m.person_gender')} ORDER BY value DESC`,
+      `SELECT ${genderBucketSql('m.person_gender')} AS label, COUNT(*)::integer AS value
+       FROM education_mixprogram m ${w} GROUP BY 1 ORDER BY value DESC`,
       params
     );
     const byLocation = await fetchall(
@@ -1218,7 +1229,7 @@ export async function getMixprogramDidi(filters) {
       by_phase: byPhase,
       by_type: byType,
       by_gender: byGender,
-      by_location: mergeSimilarLabels(byLocation),
+      by_location: withCanonicalPlaces(mergeSimilarLabels(byLocation)),
       income_change: incomeChange,
       sankey: { nodes: sankeyNodes, links }
     };

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, buildFilters, whereStr, validDateClause } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
-import { placementWindowCte, mixWorkingSql, placementStatusSql } from '@/lib/livelihoodAnalytics.js';
+import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -354,7 +354,7 @@ export async function GET(req) {
         trade_col: 'sp.training_stream_id'
       });
       if (value) {
-        clauses.push("sp.gender = :drill_value");
+        clauses.push(`${genderBucketSql('sp.gender')} = :drill_value`);
         params.drill_value = value;
       }
       if (q) {
@@ -1014,9 +1014,11 @@ export async function GET(req) {
               ? 'TRUE'
               : field === 'placement_status'
                 ? `${placementStatusSql('m.placement_status')} = :drill_value`
-                : (field === 'location' || field === 'course_name'
-                  ? eqFold(`m.${field}`, 'drill_value')
-                  : eqSoft(`m.${field}`, 'drill_value'))
+                : field === 'person_gender'
+                  ? `${genderBucketSql('m.person_gender')} = :drill_value`
+                  : (field === 'location' || field === 'course_name'
+                    ? eqFold(`m.${field}`, 'drill_value')
+                    : eqSoft(`m.${field}`, 'drill_value'))
           ],
           extraParams: { drill_value: value },
           qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
@@ -1069,7 +1071,11 @@ export async function GET(req) {
           extraClauses: [
             `m.program_id::text = '12'`,
             value
-              ? (field === 'location' ? eqFold(`m.${field}`, 'drill_value') : eqSoft(`m.${field}`, 'drill_value'))
+              ? (field === 'location'
+                ? eqFold(`m.${field}`, 'drill_value')
+                : field === 'person_gender'
+                  ? `${genderBucketSql('m.person_gender')} = :drill_value`
+                  : eqSoft(`m.${field}`, 'drill_value'))
               : 'TRUE'
           ],
           extraParams: { drill_value: value },
