@@ -32,6 +32,24 @@ export function financialYearList(count = 6, date = new Date()) {
   return years;
 }
 
+/** Every FY from startLabel through the FY that contains date, oldest first. */
+export function financialYearsFrom(startLabel = '2023-24', date = new Date()) {
+  const currentStart = Number(currentFinancialYear(date).split('-')[0]);
+  const from = Number(String(startLabel).split('-')[0]);
+  const years = [];
+  for (let y = from; y <= currentStart; y++) {
+    years.push(`${y}-${String((y + 1) % 100).padStart(2, '0')}`);
+  }
+  return years;
+}
+
+/** Newest-first list that never drops floorLabel, even after the rolling window moves on. */
+export function financialYearListFloor(count = 8, floorLabel = '2023-24', date = new Date()) {
+  const years = financialYearList(count, date);
+  if (!years.includes(floorLabel)) years.push(floorLabel);
+  return years.sort((a, b) => Number(b.split('-')[0]) - Number(a.split('-')[0]));
+}
+
 function envOr(name, fallback) {
   const value = typeof process !== 'undefined' ? process.env[name] : '';
   return (value && String(value).trim()) || fallback;

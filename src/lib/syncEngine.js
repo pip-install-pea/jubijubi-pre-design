@@ -1,7 +1,7 @@
 import axios from 'axios';
 import pool from './db.js';
 
-import { currentCalendarYear, financialYearList } from './phpRegistry.js';
+import { currentCalendarYear, financialYearsFrom } from './phpRegistry.js';
 
 const API_BASE = 'https://jubicare.indevconsultancy.com/api/centralizeddashboardapi/';
 const BATCH_SIZE = 300;
@@ -25,10 +25,11 @@ const HEALTH_BENEFICIARY_YEARS = (process.env.HEALTH_BENEFICIARY_YEARS
   .map((y) => y.trim())
   .filter(Boolean);
 const MIXPROGRAM_ID = process.env.EDU_PROGRAM_ID || '5';
-const MIXPROGRAM_YEARS = (process.env.EDU_MIX_YEARS || financialYearList(3).join(','))
+const MIXPROGRAM_YEARS = (process.env.EDU_MIX_YEARS || financialYearsFrom('2023-24').join(','))
   .split(',')
   .map((y) => y.trim())
   .filter(Boolean);
+const MIXPROGRAM_CALL_GAP_MS = 600;
 
 // Helper to sanitise API string values (remove tags and cap length)
 function _sanitise(val) {
@@ -1365,8 +1366,11 @@ export async function syncModule(moduleName, forceFull = false) {
         }
         const years = (plan.yearPayloads || []).map((p) => p.year).filter(Boolean);
         const mixYears = years.length ? years : MIXPROGRAM_YEARS;
+        let mixCalls = 0;
         for (const programId of programIds) {
           for (const year of mixYears) {
+            if (mixCalls > 0) await new Promise((resolve) => setTimeout(resolve, MIXPROGRAM_CALL_GAP_MS));
+            mixCalls += 1;
             let records = await fetchWithRetry(plan.endpoint, { program_id: programId, year }, timeout, maxRetries);
             records = decorateRecords(plan, records, year);
             records.forEach((rec) => { rec.program_id = rec.program_id || programId; });

@@ -64,8 +64,9 @@ HEALTH_SYNC_START=2025-01-01
 # mixprogram.php program_id comes from skilltracking.php table_name=program.
 # EDU_PROGRAM_ID is only the fallback when that catalog is empty.
 EDU_PROGRAM_ID=5
-# Optional. Defaults to current FY and previous FY.
-# EDU_MIX_YEARS=2025-26,2026-27
+# Optional. Unset = every FY from 2023-24 through the current FY.
+# Education and livelihood mixprogram share this list. A short value hides older years.
+# EDU_MIX_YEARS=2023-24,2024-25,2025-26,2026-27
 
 # Bounded disease-patient pull during sync (PHP caps Limit at 20)
 # DISEASE_PATIENT_MAX_IDS=12
