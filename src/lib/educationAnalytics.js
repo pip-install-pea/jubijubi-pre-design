@@ -138,16 +138,25 @@ export async function getPrePostValues(filters) {
     if (locClause) kkpClauses.push(locClause);
   }
   const kw = whereStr(kkpClauses);
+  const scoreSql = `
+    COALESCE(AVG(CASE WHEN pre_kkp::text ~ '^[0-9.]+$' THEN pre_kkp::numeric ELSE NULL END), 0) AS avg_pre,
+    COALESCE(AVG(CASE WHEN post_kkp::text ~ '^[0-9.]+$' THEN post_kkp::numeric ELSE NULL END), 0) AS avg_post,
+    COUNT(*)::integer AS count`;
   const kkpRows = await safeFetchall(
-    `SELECT
-       value_name,
-       COALESCE(AVG(CASE WHEN pre_kkp::text ~ '^[0-9.]+$' THEN pre_kkp::numeric ELSE NULL END), 0) AS avg_pre,
-       COALESCE(AVG(CASE WHEN post_kkp::text ~ '^[0-9.]+$' THEN post_kkp::numeric ELSE NULL END), 0) AS avg_post,
-       COUNT(*)::integer AS count
+    `SELECT value_name, ${scoreSql}
      FROM skilltracking_kkp_pre_and_post
      ${kw}
      GROUP BY value_name
      ORDER BY value_name`,
+    kkpParams
+  );
+  const kkpByLocation = await safeFetchall(
+    `SELECT COALESCE(NULLIF(TRIM(location_name), ''), 'Not recorded') AS location,
+            value_name, ${scoreSql}
+     FROM skilltracking_kkp_pre_and_post
+     ${kw}
+     GROUP BY COALESCE(NULLIF(TRIM(location_name), ''), 'Not recorded'), value_name
+     ORDER BY location, value_name`,
     kkpParams
   );
   if (!kkpRows.length) {
@@ -160,15 +169,26 @@ export async function getPrePostValues(filters) {
       data: []
     };
   }
+  const scoreRow = (r) => ({
+    value: r.value_name,
+    avg_pre: parseFloat(parseFloat(r.avg_pre).toFixed(2)),
+    avg_post: parseFloat(parseFloat(r.avg_post).toFixed(2)),
+    count: r.count
+  });
+  const byLocation = [];
+  for (const row of kkpByLocation) {
+    let bucket = byLocation.find((item) => item.location === row.location);
+    if (!bucket) {
+      bucket = { location: row.location, rows: [] };
+      byLocation.push(bucket);
+    }
+    bucket.rows.push(scoreRow(row));
+  }
   return {
     status: 'ok',
     source: 'skilltracking_kkp_pre_and_post',
-    data: kkpRows.map((r) => ({
-      value: r.value_name,
-      avg_pre: parseFloat(parseFloat(r.avg_pre).toFixed(2)),
-      avg_post: parseFloat(parseFloat(r.avg_post).toFixed(2)),
-      count: r.count
-    }))
+    data: kkpRows.map(scoreRow),
+    by_location: byLocation
   };
 }
 
@@ -677,13 +697,12 @@ export async function getSchoolQuadrant(filters) {
 
   const reachRows = await safeFetchall(
     `SELECT
-       COALESCE(NULLIF(TRIM(school_id), ''), program_id) AS key,
-       COALESCE(NULLIF(TRIM(school_name), ''), NULLIF(TRIM(school_id), ''), program_name, 'Unknown') AS label,
+       program_id AS key,
+       COALESCE(NULLIF(TRIM(program_name), ''), program_id, 'Unknown') AS label,
        COALESCE(SUM(CASE WHEN student_count::text ~ '^[0-9]+$' THEN student_count::integer ELSE 0 END), 0)::integer AS students
      FROM education_program
      ${pw}
-     GROUP BY COALESCE(NULLIF(TRIM(school_id), ''), program_id),
-              COALESCE(NULLIF(TRIM(school_name), ''), NULLIF(TRIM(school_id), ''), program_name, 'Unknown')
+     GROUP BY program_id, COALESCE(NULLIF(TRIM(program_name), ''), program_id, 'Unknown')
      HAVING COALESCE(SUM(CASE WHEN student_count::text ~ '^[0-9]+$' THEN student_count::integer ELSE 0 END), 0) > 0`,
     pParams
   );

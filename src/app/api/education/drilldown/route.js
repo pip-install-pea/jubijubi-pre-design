@@ -196,6 +196,11 @@ export async function GET(req) {
         clauses.push('value_name = :drill_value');
         params.drill_value = value;
       }
+      const kkpLocation = searchParams.get('location_name') || '';
+      if (kkpLocation) {
+        clauses.push('LOWER(TRIM(location_name)) = LOWER(TRIM(:kkp_location))');
+        params.kkp_location = kkpLocation;
+      }
       try {
         if (filters.state_id) {
           const stateParams = {};

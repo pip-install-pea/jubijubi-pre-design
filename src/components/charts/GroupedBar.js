@@ -11,7 +11,7 @@ export default function GroupedBar({ labels = [], datasets = [], title, caption,
     if (!any || !labels.length) return null;
     return groupedBarOption(
       labels,
-      datasets.map((ds) => ({ label: ds.label, data: ds.data })),
+      datasets.map((ds) => ({ label: ds.label, data: ds.data, color: ds.color })),
       { horizontal: Boolean(horizontal) }
     );
   }, [datasets, horizontal, labels]);

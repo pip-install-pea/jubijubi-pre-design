@@ -110,8 +110,8 @@ export default function EChart({ option, height = 340, caption, notMerge = true,
     if (!onPoint) return undefined;
     return {
       click: (params) => {
-        if (!params) return;
-        onPoint({
+        if (!params || params.componentType !== 'series') return;
+        const payload = {
           name: params.name != null ? String(params.name) : '',
           seriesName: params.seriesName,
           seriesType: params.seriesType,
@@ -120,7 +120,8 @@ export default function EChart({ option, height = 340, caption, notMerge = true,
           dataIndex: params.dataIndex,
           data: params.data,
           nativeEvent: params.event?.event
-        });
+        };
+        window.setTimeout(() => onPoint(payload), 0);
       }
     };
   }, [onPoint]);

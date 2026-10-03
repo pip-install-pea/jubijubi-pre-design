@@ -30,6 +30,7 @@ export default function EducationPage() {
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
+  const [kkpLocation, setKkpLocation] = useState('');
   const { focus, select, remove, clear } = useChartFocus();
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function EducationPage() {
         mix: mix.data,
         quadrant: quadrant.data
       });
+      setKkpLocation('');
     } catch (err) {
       console.error('Education data load failed');
     } finally {
@@ -113,7 +115,11 @@ export default function EducationPage() {
   const mixProgramLocs = mixSchool?.program_locations || [];
   const mixSunburst = mixSchool?.sunburst || [];
   const useSchoolSheets = Number(mixKpis.schools) > 0 || mixByProgram.length > 0;
-  const kkpRows = data.prePost?.status !== 'no_data' ? (data.prePost?.data || []) : [];
+  const kkpLocations = data.prePost?.by_location || [];
+  const kkpPicked = kkpLocations.find((row) => row.location === kkpLocation) || null;
+  const kkpRows = kkpPicked
+    ? kkpPicked.rows
+    : (data.prePost?.status !== 'no_data' ? (data.prePost?.data || []) : []);
   const kkpDelta = kkpRows.length
     ? kkpRows.reduce((s, r) => s + (Number(r.avg_post) || 0) - (Number(r.avg_pre) || 0), 0) / kkpRows.length
     : null;
@@ -379,7 +385,7 @@ export default function EducationPage() {
         </>
       )}
 
-      {kkpRows.length > 0 && (
+      {(kkpRows.length > 0 || data.prePost?.status === 'no_data') && (
         <div className="card" style={{ marginBottom: '24px' }}>
           <div className="card-header">
             <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>
@@ -389,22 +395,42 @@ export default function EducationPage() {
             </h3>
           </div>
           <div className="card-body">
-            {data.prePost?.source === 'skilltracking_kkp_pre_and_post' && (
-              <p className="chart-caption">
-                Location-level KKP scores from skilltracking kkp_pre_and_post. Not school- or student-level.
-              </p>
+            {data.prePost?.status === 'no_data' && (
+              <p className="chart-caption">{data.prePost.message}</p>
             )}
-            <GroupedBar
-              labels={kkpRows.map(r => r.value)}
-              datasets={[
-                { label: 'Pre score', data: kkpRows.map(r => r.avg_pre), color: SKY },
-                { label: 'Post score', data: kkpRows.map(r => r.avg_post), color: NAVY }
-              ]}
-              onBarClick={(label) => handleDrilldown(
-                data.prePost?.source === 'skilltracking_kkp_pre_and_post' ? 'kkp' : 'assessment',
-                label
-              )}
-            />
+            {data.prePost?.source === 'skilltracking_kkp_pre_and_post' && kkpRows.length > 0 && (
+              <>
+                <p className="chart-caption">
+                  {kkpPicked
+                    ? `Scores for ${kkpPicked.location}.`
+                    : 'All is the average of every location.'}
+                </p>
+                {kkpLocations.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <YearStrip
+                      label="Location"
+                      years={['All', ...kkpLocations.map((row) => row.location)]}
+                      value={kkpPicked ? kkpPicked.location : 'All'}
+                      onChange={(name) => setKkpLocation(name === 'All' ? '' : name)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {kkpRows.length > 0 && (
+              <GroupedBar
+                labels={kkpRows.map(r => r.value)}
+                datasets={[
+                  { label: 'Pre score', data: kkpRows.map(r => r.avg_pre), color: SKY },
+                  { label: 'Post score', data: kkpRows.map(r => r.avg_post), color: NAVY }
+                ]}
+                onBarClick={(label) => handleDrilldown(
+                  data.prePost?.source === 'skilltracking_kkp_pre_and_post' ? 'kkp' : 'assessment',
+                  label,
+                  kkpPicked ? { location_name: kkpPicked.location } : {}
+                )}
+              />
+            )}
           </div>
         </div>
       )}
