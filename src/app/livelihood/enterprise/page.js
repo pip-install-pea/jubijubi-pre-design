@@ -6,7 +6,6 @@ import RankingBar from '../../../components/charts/RankingBar';
 import BrandLine from '../../../components/charts/BrandLine';
 import ColumnBar from '../../../components/charts/ColumnBar';
 import EChart, {
-  treemapOption,
   roseOption,
   groupedBarOption
 } from '../../../components/charts/EChart';
@@ -111,11 +110,21 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki dukan</h3>
               </div>
               <div className="card-body">
+                <p className="chart-caption">No outside funding – completely by JBF</p>
                 <div className="kpi-grid">
                   <div className="kpi-card">
                     <div className="kpi-body">
                       <div className="kpi-value">{fmt(data.didi.people)}</div>
-                      <div className="kpi-label">People</div>
+                      <div className="kpi-label">Women</div>
+                      <p className="kpi-caption">Counted per phase; a woman in more than one phase is counted in each.</p>
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-label">Training duration (days)</div>
+                      {(data.didi.by_type || []).map((row) => (
+                        <p key={row.label} className="kpi-caption">{row.label}: {fmt(row.value)}</p>
+                      ))}
                     </div>
                   </div>
                   <div className="kpi-card">
@@ -170,10 +179,15 @@ export default function EnterprisePage() {
                 </div>
                 <div className="card-row" style={{ marginTop: '16px' }}>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>By location</h3></div>
+                    <div className="card-header"><h3>Women entrepreneurs location-wise</h3></div>
                     <div className="card-body">
                       <EChart
-                        option={treemapOption(data.didi.by_location)}
+                        option={groupedBarOption(
+                          (data.didi.by_location || []).map((row) => row.label),
+                          [{ label: 'Women', data: (data.didi.by_location || []).map((row) => Number(row.value) || 0) }],
+                          { horizontal: true, showLabels: true, legend: false, withPercent: true, gridLeft: 120 }
+                        )}
+                        height={Math.max(220, (data.didi.by_location || []).length * 36)}
                         onPoint={(p) => p.name && handleDrilldown('mix_didi_location', p.name)}
                       />
                     </div>

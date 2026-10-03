@@ -548,26 +548,13 @@ export async function getYoYIncome() {
   const empty = [];
   try {
     const { w, params } = mixSkillingWhere({}, { workingOnly: true });
-    const post = moneySql('m.post_income');
+    const post = validIncomeSql('m.post_income');
     const rows = await fetchall(
       `SELECT
          COALESCE(NULLIF(TRIM(m.year), ''), 'Unknown') AS yr,
          COUNT(*)::integer AS working_rows,
          COUNT(${post})::integer AS with_income,
-         COUNT(*) FILTER (
-           WHERE ${post} IS NOT NULL
-             AND (${post} < ${SHEET_INCOME_MIN} OR ${post} > ${SHEET_INCOME_MAX})
-         )::integer AS outliers,
-         COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (
-           ORDER BY CASE
-             WHEN ${post} BETWEEN ${SHEET_INCOME_MIN} AND ${SHEET_INCOME_MAX}
-             THEN ${post}
-           END
-         ), 0) AS median_income,
-         COALESCE(AVG(CASE
-           WHEN ${post} BETWEEN ${SHEET_INCOME_MIN} AND ${SHEET_INCOME_MAX}
-           THEN ${post}
-         END), 0) AS avg_income
+         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${post}) AS median_income
        FROM education_mixprogram m
        ${w}
        GROUP BY 1
@@ -576,11 +563,9 @@ export async function getYoYIncome() {
     );
     return rows.map((r) => ({
       year: r.yr,
-      median_income: parseFloat(Number(r.median_income || 0).toFixed(0)),
-      avg_income: parseFloat(Number(r.avg_income || 0).toFixed(0)),
+      median_income: r.median_income == null ? null : Math.round(Number(r.median_income)),
       count: Number(r.with_income) || 0,
       working_rows: Number(r.working_rows) || 0,
-      outliers: Number(r.outliers) || 0,
       source: 'education_mixprogram'
     }));
   } catch (err) {

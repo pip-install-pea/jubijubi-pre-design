@@ -199,7 +199,12 @@ export function comboLineBarOption(labels, { bar, line, barName = 'Added this ye
 
 export function doughnutOption(items, { percent = false } = {}) {
   const data = (items || [])
-    .map((r) => ({ name: String(r.label ?? r.name ?? 'Unknown'), value: Number(r.value) || 0, percent: r.percent }))
+    .map((r) => ({
+      name: String(r.label ?? r.name ?? 'Unknown'),
+      value: Number(r.value) || 0,
+      percent: r.percent,
+      ...(r.color ? { itemStyle: { color: r.color } } : {})
+    }))
     .filter((r) => r.value > 0);
   return {
     tooltip: { trigger: 'item', renderMode: 'richText' },
@@ -246,11 +251,12 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '' } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0 } = {}) {
+  const total = (datasets || []).reduce((sum, ds) => sum + (ds.data || []).reduce((inner, n) => inner + (Number(n) || 0), 0), 0);
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: legend ? { bottom: 0 } : { show: false },
-    grid: { left: yName ? 48 : 8, right: 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    grid: { left: gridLeft || (yName ? 48 : 8), right: withPercent ? 88 : 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
     xAxis: horizontal
       ? { type: 'value', name: yName || undefined, nameLocation: 'middle', nameGap: 36, axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
       : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
@@ -268,7 +274,10 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
           position: horizontal ? 'right' : 'top',
           formatter: (p) => {
             const n = Number(p.value);
-            return Number.isFinite(n) ? n.toLocaleString('en-IN') : '';
+            if (!Number.isFinite(n)) return '';
+            const count = n.toLocaleString('en-IN');
+            if (!withPercent || !total) return count;
+            return `${count} (${((n / total) * 100).toFixed(1)}%)`;
           }
         }
       } : {})
@@ -353,14 +362,28 @@ export function roseOption(items) {
   };
 }
 
-export function funnelOption(items) {
+export function funnelOption(items, { percent = false, keepOrder = false } = {}) {
   const data = (items || [])
-    .map((r) => ({ name: String(r.label ?? r.name ?? 'Unknown'), value: Number(r.value) || 0 }))
-    .filter((r) => r.value > 0)
-    .sort((a, b) => b.value - a.value);
+    .map((r) => ({
+      name: String(r.label ?? r.name ?? 'Unknown'),
+      value: Number(r.value) || 0,
+      key: r.key || r.label || r.name,
+      ...(r.color ? { itemStyle: { color: r.color } } : {})
+    }))
+    .filter((r) => r.value > 0);
+  if (!keepOrder) data.sort((a, b) => b.value - a.value);
   return {
     tooltip: { trigger: 'item', renderMode: 'richText' },
-    series: [{ type: 'funnel', left: '12%', width: '70%', data, sort: 'descending' }]
+    series: [{
+      type: 'funnel',
+      left: '12%',
+      width: '70%',
+      data,
+      sort: keepOrder ? 'none' : 'descending',
+      ...(percent ? {
+        label: { formatter: (p) => `${p.name}\n${Number(p.percent).toFixed(1)}%` }
+      } : {})
+    }]
   };
 }
 

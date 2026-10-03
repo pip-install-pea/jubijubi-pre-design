@@ -262,13 +262,14 @@ export default function PlacementPage() {
           </div>
 
           <div className="card" style={{ marginTop: '24px' }}>
-            <div className="card-header"><h3>Typical post income by field-sheet year</h3></div>
+            <div className="card-header"><h3>Median post-training income by year</h3></div>
             <div className="card-body">
+              <p className="chart-caption">Median of recorded post income. Zero and blank values are left out. The bars are the candidates counted in that median.</p>
               <EChart
                 option={comboLineBarOption((data.yoy || []).map((r) => r.year), {
                   bar: (data.yoy || []).map((r) => Number(r.count) || 0),
                   line: (data.yoy || []).map((r) => Number(r.median_income) || 0),
-                  barName: 'Rows with post income',
+                  barName: 'Candidates with a recorded post income',
                   lineName: 'Median post income (₹)',
                   dualAxis: true
                 })}

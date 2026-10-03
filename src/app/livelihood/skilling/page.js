@@ -7,13 +7,27 @@ import BrandDoughnut from '../../../components/charts/BrandDoughnut';
 import ColumnBar from '../../../components/charts/ColumnBar';
 import BenchmarkBar from '../../../components/charts/BenchmarkBar';
 import EChart, {
-  treemapOption,
-  heatmapOption,
-  roseOption,
   funnelOption,
   groupedBarOption,
   stackedBarOption
 } from '../../../components/charts/EChart';
+
+const CAREER_STAGES = [
+  { key: 'Further study', label: 'Higher Education / Further Study', color: '#1d4ed8' },
+  { key: 'Self employment', label: 'Self-Employment', color: '#7dd3fc' },
+  { key: 'Ongoing course', label: 'Continuing Training', color: '#eab308' },
+  { key: 'Working', label: 'Employment', color: '#16a34a' },
+  { key: 'Not reported', label: 'Status Not Reported', color: '#7c3aed' },
+  { key: 'Job searching', label: 'Job Seeking', color: '#f97316' },
+  { key: 'Homemaker', label: 'Homemaker', color: '#0f766e' }
+];
+
+const SHEET_GENDER_COLORS = {
+  Female: '#be185d',
+  Male: '#1d4ed8',
+  'Not recorded': '#94a3b8',
+  Others: '#0f766e'
+};
 import DrilldownModal from '../../../components/DrilldownModal';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
@@ -147,7 +161,7 @@ export default function SkillingPage() {
           {data.mixSkilling?.status === 'ok' && (
             <div className="card" style={{ marginBottom: '24px' }}>
               <div className="card-header">
-                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Skilling field sheet</h3>
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Skill Development Stats</h3>
               </div>
               <div className="card-body">
                 <p className="chart-caption">
@@ -157,7 +171,7 @@ export default function SkillingPage() {
                   <div className="kpi-card">
                     <div className="kpi-body">
                       <div className="kpi-value">{fmt(data.mixSkilling.people)}</div>
-                      <div className="kpi-label">People</div>
+                      <div className="kpi-label">Total Candidates Enrolled</div>
                     </div>
                   </div>
                   <div className="kpi-card">
@@ -212,44 +226,64 @@ export default function SkillingPage() {
                 </div>
                 <div className="card-row" style={{ marginTop: '16px' }}>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>By course</h3></div>
+                    <div className="card-header"><h3>Course-wise enrolment</h3></div>
                     <div className="card-body">
+                      <p className="chart-caption">Share of candidates on the skilling sheet. All courses are shown.</p>
                       <EChart
-                        option={treemapOption(data.mixSkilling.by_course)}
+                        option={groupedBarOption(
+                          (data.mixSkilling.by_course || []).map((row) => row.label),
+                          [{ label: 'Candidates', data: (data.mixSkilling.by_course || []).map((row) => Number(row.value) || 0) }],
+                          { horizontal: true, showLabels: true, legend: false, withPercent: true, gridLeft: 180 }
+                        )}
+                        height={Math.max(280, (data.mixSkilling.by_course || []).length * 28)}
                         focus={focus}
                         onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
                       />
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Gender</h3></div>
+                    <div className="card-header"><h3>Gender-wise portfolio</h3></div>
                     <div className="card-body">
-                      <EChart
-                        option={roseOption(data.mixSkilling.by_gender)}
-                        onPoint={(p) => p.name && handleDrilldown('mix_skill_gender', p.name)}
+                      <BrandDoughnut
+                        labels={(data.mixSkilling.by_gender || []).map((row) => row.label)}
+                        values={(data.mixSkilling.by_gender || []).map((row) => row.value)}
+                        colors={(data.mixSkilling.by_gender || []).map((row) => SHEET_GENDER_COLORS[row.label])}
+                        percent
+                        onSliceClick={(label) => handleDrilldown('mix_skill_gender', label)}
                       />
                     </div>
                   </div>
                 </div>
                 <div className="card-row" style={{ marginTop: '16px' }}>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Placement status</h3></div>
+                    <div className="card-header"><h3>Post-Training Career Outcomes</h3></div>
                     <div className="card-body">
+                      <p className="chart-caption">Current status of skilling program participants.</p>
                       <EChart
-                        option={funnelOption(data.mixSkilling.by_placement)}
-                        caption="Status only. An employer name on the sheet is counted as Working."
-                        onPoint={(p) => p.name && handleDrilldown('mix_placement', p.name)}
+                        option={funnelOption(
+                          CAREER_STAGES.map((stage) => {
+                            const row = (data.mixSkilling.by_placement || []).find((item) => item.label === stage.key);
+                            return row ? { label: stage.label, value: row.value, key: stage.key, color: stage.color } : null;
+                          }).filter(Boolean),
+                          { percent: true, keepOrder: true }
+                        )}
+                        onPoint={(p) => handleDrilldown('mix_placement', p.data?.key || p.name)}
                       />
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Income change, pre to post</h3></div>
+                    <div className="card-header">
+                      <h3>Income Mobility pre to post training</h3>
+                    </div>
                     <div className="card-body">
+                      <p className="chart-caption">Change in Monthly income among participants with both pre and post training income data</p>
                       <ColumnBar
-                        labels={(data.mixSkilling.income_change || []).map((r) => r.label)}
-                        series={incomeSeries(data.mixSkilling.income_change)}
+                        labels={(data.mixSkilling.income_change || []).filter((row) => row.label !== 'Income fell').map((row) => row.label)}
+                        series={incomeSeries((data.mixSkilling.income_change || []).filter((row) => row.label !== 'Income fell'))}
                         axisTitle="No. of candidates"
-                        caption={`Candidates with both a recorded pre and post income (n = ${formatCount((data.mixSkilling.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))}). Zero and blank values are left out.`}
+                        horizontal
+                        height={320}
+                        caption={`${formatCount((data.mixSkilling.income_change || []).find((row) => row.label === 'Income fell')?.value)} of ${formatCount((data.mixSkilling.income_change || []).reduce((sum, row) => sum + (Number(row.value) || 0), 0))} candidates reported a lower post income and are not shown.`}
                         onBarClick={(label) => handleDrilldown('income_delta', label)}
                       />
                     </div>
@@ -257,7 +291,7 @@ export default function SkillingPage() {
                 </div>
                 {(data.mixSkilling.by_course_income || []).length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Mean pre vs post income by course</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Course-wise Mean Pre vs Post Income</h3>
                     <EChart
                       option={groupedBarOption(
                         data.mixSkilling.by_course_income.map((r) => r.label),
@@ -268,20 +302,6 @@ export default function SkillingPage() {
                       )}
                       focus={focus}
                       onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
-                    />
-                  </div>
-                )}
-                {data.mixSkilling.heatmap?.x?.length > 0 && (
-                  <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>People by course and location</h3>
-                    <EChart
-                      option={heatmapOption(data.mixSkilling.heatmap.x, data.mixSkilling.heatmap.y, data.mixSkilling.heatmap.cells)}
-                      height={380}
-                      onPoint={(p) => {
-                        const course = data.mixSkilling.heatmap.x?.[p.value?.[0]];
-                        const loc = data.mixSkilling.heatmap.y?.[p.value?.[1]];
-                        if (course) handleDrilldown('mix_skill_heat', course, loc ? { location: loc } : {});
-                      }}
                     />
                   </div>
                 )}
@@ -309,7 +329,7 @@ export default function SkillingPage() {
               <div className="kpi-card">
                 <div className="kpi-body">
                   <div className="kpi-value">{womenPct}%</div>
-                  <div className="kpi-label">Women share</div>
+                  <div className="kpi-label">Women participation</div>
                   <p className="kpi-caption">Of roster headcount. All years.</p>
                 </div>
               </div>

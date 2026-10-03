@@ -5,14 +5,15 @@ import EChart, { doughnutOption } from './EChart';
 import { hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-export default function BrandDoughnut({ labels = [], values = [], percents = [], title, caption, onSliceClick, focus = [], percent = false }) {
+export default function BrandDoughnut({ labels = [], values = [], percents = [], colors = [], title, caption, onSliceClick, focus = [], percent = false }) {
   const paired = useMemo(() => labels
     .map((label, i) => ({
       label: String(label ?? 'Unknown'),
       value: Number(values[i] || 0),
-      percent: percents[i]
+      percent: percents[i],
+      color: colors[i]
     }))
-    .filter((r) => r.value > 0), [labels, values, percents]);
+    .filter((r) => r.value > 0), [labels, values, percents, colors]);
 
   const option = useMemo(() => {
     if (!hasValues(paired.map((r) => r.value))) return null;
