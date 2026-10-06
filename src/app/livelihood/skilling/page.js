@@ -265,6 +265,7 @@ export default function SkillingPage() {
       </PageRail>
       {data && (
         <>
+          <h1 style={{ fontSize: '22px', fontWeight: 700, margin: '4px 0 16px' }}>Skill Development Stats</h1>
           <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '8px 0 12px' }}>Training & Course Portfolio</h2>
           <p className="chart-caption">Course and location counts come from the M&E field sheet. Roster, batches, and trades come from the skill-tracking app. The two sources are not merged.</p>
           <div className="kpi-grid">
