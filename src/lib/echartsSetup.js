@@ -10,7 +10,8 @@ import {
   TreemapChart,
   FunnelChart,
   SankeyChart,
-  SunburstChart
+  SunburstChart,
+  MapChart
 } from 'echarts/charts';
 import {
   GridComponent,
@@ -19,7 +20,9 @@ import {
   VisualMapComponent,
   DatasetComponent,
   TitleComponent,
-  ToolboxComponent
+  ToolboxComponent,
+  GeoComponent,
+  GraphicComponent
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { BRAND_SERIES } from './chartTheme';
@@ -34,6 +37,7 @@ echarts.use([
   FunnelChart,
   SankeyChart,
   SunburstChart,
+  MapChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -41,6 +45,8 @@ echarts.use([
   DatasetComponent,
   TitleComponent,
   ToolboxComponent,
+  GeoComponent,
+  GraphicComponent,
   CanvasRenderer
 ]);
 

@@ -19,6 +19,8 @@ scripts/*
 !scripts/create-enterprise-market-access.js
 !scripts/sync.mjs
 !scripts/check-system.cjs
+!scripts/geo/
+!scripts/geo/**
 
 # Live PHP probe dumps (may contain personal data)
 /api-samples/

@@ -223,6 +223,8 @@ export default function GlobalFilters({ onApply }) {
   const lastPayloadRef = useRef('');
   const applyRef = useRef(null);
   const filtersRef = useRef(filters);
+  const moduleRef = useRef(moduleName);
+  moduleRef.current = moduleName;
 
   const apply = (next, { writeUrl = true } = {}) => {
     const body = payloadFor(moduleName, next);
@@ -288,6 +290,14 @@ export default function GlobalFilters({ onApply }) {
         const clock = patch.financial_year || patch.academic_year;
         next.academic_year = clock;
         next.financial_year = clock;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'state_id')) {
+        const stateId = String(patch.state_id || '').split(',').filter(Boolean)[0] || '';
+        if (stateId) fetchDistricts(stateId, moduleRef.current);
+        else {
+          activeStateIdRef.current = '';
+          setDistricts([]);
+        }
       }
       setFilters(next);
       applyRef.current?.(next);

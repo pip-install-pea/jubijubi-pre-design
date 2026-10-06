@@ -13,7 +13,9 @@
     "db:sync": "node --env-file=.env --experimental-detect-module scripts/sync.mjs",
     "db:check": "node --env-file=.env scripts/check-system.cjs",
     "create-enterprise-market-access-table": "node scripts/create-enterprise-market-access.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "geo:build": "bash scripts/geo/build-india-geo.sh public/geo",
+    "geo:check": "node scripts/geo/check-india-geo.mjs public/geo src/lib/geo/locations.js"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
