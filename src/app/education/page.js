@@ -18,6 +18,7 @@ import PageRail from '../../components/PageRail';
 import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { financialYearList } from '../../lib/phpRegistry.js';
 import { NAVY, SKY } from '../../lib/chartTheme';
+import { GraduationCap, Sun } from '@phosphor-icons/react';
 
 export default function EducationPage() {
   const [data, setData] = useState({
@@ -163,10 +164,18 @@ export default function EducationPage() {
                 </div>
               </div>
             )}
-            <div className="kpi-card">
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('mix_programs', 'Total programs')}>
               <div className="kpi-body">
-                <div className="kpi-value">{mixByProgram.length}</div>
-                <div className="kpi-label">School programmes</div>
+                <div className="kpi-value">{(mix?.programs || []).length}</div>
+                <div className="kpi-label">Total programs</div>
+                <p className="kpi-caption">Programmes in the initiative list that have rows under these filters</p>
+              </div>
+            </div>
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('mix_activities', 'Activities covered')}>
+              <div className="kpi-body">
+                <div className="kpi-value">{Number(mix?.muskaan_activity?.rows || 0).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Activities covered</div>
+                <p className="kpi-caption">Muskaan activity rows</p>
               </div>
             </div>
             {Number(mixKpis.teachers) > 0 && (
@@ -214,6 +223,44 @@ export default function EducationPage() {
           </div>
         )}
       </div>
+
+      {mix?.network && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Our School Network</h3>
+          </div>
+          <div className="card-body">
+            <div className="kpi-grid">
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{mix.network.locations}</div>
+                  <div className="kpi-label">School Locations</div>
+                  <p className="kpi-caption">{(mix.network.location_names || []).join(', ') || 'None of the five network locations under these filters'}</p>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{mix.network.states}</div>
+                  <div className="kpi-label">States Covered</div>
+                  <p className="kpi-caption">{(mix.network.state_names || []).join(', ') || 'None under these filters'}</p>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <GraduationCap size={28} weight="duotone" />
+                  <div className="kpi-label">Education – Focus Sector</div>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <Sun size={28} weight="duotone" />
+                  <div className="kpi-label">Brighter Futures – Our Commitment</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mix && (
         <>
