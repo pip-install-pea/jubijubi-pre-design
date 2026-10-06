@@ -1388,6 +1388,20 @@ export async function syncModule(moduleName, forceFull = false) {
             totalFetched += records.length;
             if (records.length > 0) {
               totalUpserted += await ingestRecords(plan, records);
+              const keptIds = [...new Set(records.map((rec) => String(rec.id || '')).filter(Boolean))];
+              if (keptIds.length) {
+                const removed = await pool.query(
+                  `DELETE FROM education_mixprogram
+                   WHERE program_id::text = $1
+                     AND year = $2
+                     AND NOT (id::text = ANY($3::text[]))`,
+                  [String(programId), String(year), keptIds]
+                );
+                const removedCount = removed.rowCount || 0;
+                if (removedCount) {
+                  console.log(`[syncEngine] mixprogram removed ${removedCount} stale rows program_id=${programId} year=${year}`);
+                }
+              }
             }
           }
         }

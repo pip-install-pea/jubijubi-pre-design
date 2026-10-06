@@ -3,7 +3,9 @@ import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, bindIn, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
+import { getMixprogramSchools, educationMonthClause } from '@/lib/educationAnalytics.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
+import { eduPlaceSql, excludeWowClause, EDU_SCHOOL_IDS, EDU_CASTE_IDS } from '@/lib/eduGeo.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
 import { SKILL_EDU_GEO_JOIN, EDU_DISTRICT, EDU_STATE, resolveGeoId } from '@/lib/geoLookups.js';
 
@@ -62,10 +64,11 @@ export async function GET(req) {
 
     if (drillType === 'activity') {
       const { clauses, params } = buildFilters(filters, {
-        state_col: 'education_program.state_id',
-        district_col: 'education_program.district_id',
+        state_col: null,
+        district_col: null,
         academic_year_col: 'education_program.academic_year'
       });
+      clauses.push(excludeWowClause('program_name'));
       if (value) {
         clauses.push("academic_year = :drill_value");
         params.drill_value = value;
@@ -105,10 +108,11 @@ export async function GET(req) {
 
     } else if (drillType === 'school') {
       const { clauses, params } = buildFilters(filters, {
-        state_col: 'education_program.state_id',
-        district_col: 'education_program.district_id',
+        state_col: null,
+        district_col: null,
         academic_year_col: 'education_program.academic_year'
       });
+      clauses.push(excludeWowClause('program_name'));
       if (academicYear) {
         clauses.push("academic_year = :drill_ay");
         params.drill_ay = academicYear;
@@ -295,11 +299,12 @@ export async function GET(req) {
           : { state_id: geoId, district_id: null })
       };
       const { clauses, params } = buildFilters(scoped, {
-        state_col: 'education_program.state_id',
-        district_col: 'education_program.district_id',
+        state_col: null,
+        district_col: null,
         academic_year_col: 'education_program.academic_year',
         module: 'education'
       });
+      clauses.push(excludeWowClause('program_name'));
       if (q) {
         clauses.push('(program_name ILIKE :q OR school_name ILIKE :q OR program_id::text LIKE :q)');
         params.q = `%${q}%`;
@@ -329,11 +334,12 @@ export async function GET(req) {
 
     } else if (drillType === 'quadrant') {
       const { clauses, params } = buildFilters(filters, {
-        state_col: 'education_program.state_id',
-        district_col: 'education_program.district_id',
+        state_col: null,
+        district_col: null,
         academic_year_col: 'education_program.academic_year',
         module: 'education'
       });
+      clauses.push(excludeWowClause('program_name'));
       if (value) {
         clauses.push('(school_id = :drill_value OR school_name = :drill_value OR program_id = :drill_value OR program_name = :drill_value)');
         params.drill_value = value;
@@ -363,10 +369,11 @@ export async function GET(req) {
 
     } else if (!String(drillType).startsWith('mix_')) {
       const { clauses, params } = buildFilters(filters, {
-        state_col: 'education_program.state_id',
-        district_col: 'education_program.district_id',
+        state_col: null,
+        district_col: null,
         academic_year_col: 'education_program.academic_year'
       });
+      clauses.push(excludeWowClause('program_name'));
       if (q) {
         clauses.push("(program_name ILIKE :q OR school_name ILIKE :q OR activity_type ILIKE :q OR program_id::text LIKE :q)");
         params.q = `%${q}%`;
@@ -401,10 +408,52 @@ export async function GET(req) {
       ];
     }
 
+    if (drillType === 'mix_activities') {
+      const year = filters.academic_year || filters.financial_year;
+      const monthParams = {};
+      const monthClause = educationMonthClause('m.month', filters, monthParams, 'drill_month');
+      const payload = await queryMixRows({
+        searchParams,
+        year,
+        q,
+        page,
+        perPage,
+        filters,
+        extraClauses: [`m.program_id::text = '6'`, ...(monthClause ? [monthClause] : [])],
+        extraParams: monthParams,
+        qSql: '(m.activity_name ILIKE :q OR m.month ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.activity_name), ''), '—') AS activity_name,
+          COALESCE(NULLIF(TRIM(m.month), ''), '—') AS month,
+          COALESCE(m.students_total, 0)::integer AS students_total`,
+        columns: [
+          { key: 'activity_name', label: 'Activity' },
+          { key: 'month', label: 'Month' },
+          { key: 'students_total', label: 'Students' }
+        ]
+      });
+      return NextResponse.json(payload);
+    }
+
+    if (drillType === 'mix_programs') {
+      const mix = await getMixprogramSchools(filters);
+      const rows = mix?.programs || [];
+      return NextResponse.json({
+        columns: [
+          { key: 'name', label: 'Program' },
+          { key: 'initiative', label: 'Initiative' },
+          { key: 'rows', label: 'Rows' }
+        ],
+        rows,
+        total: rows.length,
+        page: 1,
+        per_page: Math.max(rows.length, 1)
+      });
+    }
+
     if (String(drillType).startsWith('mix_')) {
       const year = filters.academic_year || filters.financial_year;
       const location = searchParams.get('location') || '';
-      const mixCommon = { year, q, page, perPage };
+      const mixCommon = { year, q, page, perPage, filters };
       const schoolJoin = 'LEFT JOIN skilltracking_program p ON p.program_id::text = m.program_id::text';
       const schoolCols = [
         { key: 'school_name', label: 'School' },
@@ -415,7 +464,7 @@ export async function GET(req) {
       ];
       const schoolSelect = `SELECT
         COALESCE(NULLIF(TRIM(m.school_name), ''), '—') AS school_name,
-        COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+        ${eduPlaceSql()} AS location,
         COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS program,
         m.year,
         COALESCE(m.students_total, 0)::integer AS students_total`;
@@ -426,7 +475,7 @@ export async function GET(req) {
           ...mixCommon,
           joinSql: schoolJoin,
           extraClauses: [
-            `m.program_id::text IN ('3','4','8','9','10')`,
+            `m.program_id::text IN (${EDU_SCHOOL_IDS.map((id) => `'${id}'`).join(', ')})`,
             eqSoft(`COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text)`, 'drill_value')
           ],
           extraParams: { drill_value: value },
@@ -442,8 +491,8 @@ export async function GET(req) {
           ...mixCommon,
           joinSql: schoolJoin,
           extraClauses: [
-            `m.program_id::text IN ('3','4','8','9','10')`,
-            eqFold('m.location', 'drill_value')
+            `m.program_id::text IN (${EDU_SCHOOL_IDS.map((id) => `'${id}'`).join(', ')})`,
+            `(${eduPlaceSql()} = :drill_value)`
           ],
           extraParams: { drill_value: value },
           qSql: '(m.school_name ILIKE :q OR p.program_name ILIKE :q)',
@@ -458,9 +507,9 @@ export async function GET(req) {
           ...mixCommon,
           joinSql: schoolJoin,
           extraClauses: [
-            `m.program_id::text IN ('3','4','8','9','10')`,
+            `m.program_id::text IN (${EDU_SCHOOL_IDS.map((id) => `'${id}'`).join(', ')})`,
             eqSoft(`COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text)`, 'drill_value'),
-            location ? eqFold('m.location', 'location') : 'TRUE'
+            location ? `(${eduPlaceSql()} = :location)` : 'TRUE'
           ],
           extraParams: { drill_value: value, location },
           qSql: '(m.school_name ILIKE :q)',
@@ -482,7 +531,7 @@ export async function GET(req) {
           ...mixCommon,
           joinSql: schoolJoin,
           extraClauses: [
-            `m.program_id::text IN ('3','4','9','10')`,
+            `m.program_id::text IN (${EDU_CASTE_IDS.map((id) => `'${id}'`).join(', ')})`,
             casteCol ? `COALESCE(m.${casteCol}, 0) > 0` : 'TRUE'
           ],
           qSql: '(m.school_name ILIKE :q OR m.location ILIKE :q)',
@@ -492,14 +541,16 @@ export async function GET(req) {
         return NextResponse.json(payload);
       }
       if (drillType === 'mix_theme') {
+        const monthParams = {};
+        const monthClause = educationMonthClause('m.month', filters, monthParams, 'theme_month');
         const payload = await queryMixRows({
           searchParams,
           ...mixCommon,
-          extraClauses: [`m.program_id::text = '5'`, eqFold('m.theme_touched', 'drill_value')],
-          extraParams: { drill_value: value },
+          extraClauses: [`m.program_id::text = '5'`, eqFold('m.theme_touched', 'drill_value'), ...(monthClause ? [monthClause] : [])],
+          extraParams: { drill_value: value, ...monthParams },
           qSql: '(m.school_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.school_name), ''), '—') AS school_name,
-            COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            ${eduPlaceSql()} AS location,
             m.theme_touched, m.year, COALESCE(m.students_total, 0)::integer AS students_total`,
           columns: [
             { key: 'school_name', label: 'School' },
@@ -516,21 +567,24 @@ export async function GET(req) {
         const monthYear = String(value || '').trim().match(/^(.*)\s+(\d{4}(?:-\d{2})?)$/);
         const monthValue = searchParams.get('month') || (monthYear ? monthYear[1].trim() : value);
         const yearValue = searchParams.get('year') || monthYear?.[2] || year;
+        const monthParams = {};
+        const monthClause = educationMonthClause('m.month', filters, monthParams, 'act_month');
         const payload = await queryMixRows({
           searchParams,
           ...mixCommon,
           year: field === 'month' ? yearValue : year,
           extraClauses: [
             `m.program_id::text = '6'`,
+            ...(monthClause ? [monthClause] : []),
             field === 'month'
               ? eqSoft('m.month', 'drill_value')
               : eqFold(`m.${field}`, 'drill_value')
           ],
-          extraParams: { drill_value: field === 'month' ? monthValue : value },
+          extraParams: { drill_value: field === 'month' ? monthValue : value, ...monthParams },
           qSql: '(m.activity_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.activity_name), ''), '—') AS activity_name,
             COALESCE(NULLIF(TRIM(m.month), ''), '—') AS month,
-            COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+            ${eduPlaceSql()} AS location,
             m.year, COALESCE(m.students_total, 0)::integer AS students_total`,
           columns: [
             { key: 'activity_name', label: 'Activity' },
@@ -552,7 +606,7 @@ export async function GET(req) {
           ],
           extraParams: { drill_value: value },
           qSql: '(m.location ILIKE :q)',
-          selectSql: `SELECT COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,
+          selectSql: `SELECT ${eduPlaceSql()} AS location,
             COALESCE(NULLIF(TRIM(m.person_gender), ''), '—') AS gender,
             m.year, m.person_age`,
           columns: [

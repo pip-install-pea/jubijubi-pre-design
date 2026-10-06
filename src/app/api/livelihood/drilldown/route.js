@@ -124,6 +124,29 @@ export async function GET(req) {
     let rows = [];
     let total = 0;
 
+    if (drillType === 'hpwow_school') {
+      const month = sheetMonth(filters);
+      const payload = await queryMixRows({
+        searchParams,
+        year: filters.academic_year || filters.financial_year,
+        page,
+        perPage,
+        q,
+        qSql: '(m.school_name ILIKE :q OR m."class" ILIKE :q)',
+        extraClauses: [`m.program_id::text = '10'`, ...month.clauses],
+        extraParams: month.params,
+        selectSql: `SELECT COALESCE(NULLIF(btrim(m.school_name), ''), '—') AS school_name,
+          COALESCE(NULLIF(btrim(m."class"), ''), '—') AS class_name,
+          COALESCE(m.students_total, 0)::integer AS students_total`,
+        columns: [
+          { key: 'school_name', label: 'School' },
+          { key: 'class_name', label: 'Class' },
+          { key: 'students_total', label: 'Students' }
+        ]
+      });
+      return NextResponse.json(payload);
+    }
+
     if (drillType === 'work_status' || drillType === 'placement_status') {
       const { clauses, params } = livelihoodFilters(filters, {
         state_col: 'sm.state_id',

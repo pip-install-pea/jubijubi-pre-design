@@ -1,7 +1,8 @@
 import { fetchall, scalar } from './db.js';
 import { bindIn, buildFilters, whereStr } from './analytics.js';
 import { getMixprogramSchools, MIX_CANONICAL_ROW } from './educationAnalytics.js';
-import { fetchFarmerYearSeries } from './livelihoodAnalytics.js';
+import { fetchFarmerYearSeries, getMixprogramHpWow } from './livelihoodAnalytics.js';
+import { excludeWowClause } from './eduGeo.js';
 
 function canSee(user, thematic) {
   return user?.role === 'super_admin' || user?.role === 'admin' || user?.thematic === thematic;
@@ -99,12 +100,20 @@ export async function getOverview(filters, user) {
        ${mixWhere} AND m.program_id::text = '12'`,
       mixParams
     );
+    let hpWowStudents = 0;
+    try {
+      const hpWow = await getMixprogramHpWow(filters);
+      hpWowStudents = hpWow?.status === 'ok' ? Number(hpWow.students) || 0 : 0;
+    } catch (err) {
+      console.warn('[overview] HP WOW skipped:', err.message);
+    }
     result.livelihood_counts = [
       { label: 'Skill roster', value: result.livelihood_roster },
       { label: 'Skilling sheet', value: result.skilling_sheet },
       { label: 'Enterprise members', value: result.enterprise_members },
-      { label: 'Didi ki dukan', value: result.didi_people },
-      { label: 'Jubifarm farmers', value: result.farmers }
+      { label: 'Didi ki Dukan', value: result.didi_people },
+      { label: 'Jubifarm farmers', value: result.farmers },
+      { label: 'HP WOW (school skilling)', value: hpWowStudents }
     ].filter((r) => r.value > 0);
     try {
       const series = await fetchFarmerYearSeries();
@@ -139,7 +148,7 @@ export async function getOverview(filters, user) {
     } else {
       result.education_students = await safeScalar(
         `SELECT COALESCE(SUM(CASE WHEN student_count::text ~ '^[0-9]+$' THEN student_count::integer ELSE 0 END), 0)::integer
-         FROM education_program ${whereStr(ef.clauses)}`,
+         FROM education_program ${whereStr([...ef.clauses, excludeWowClause('program_name')])}`,
         ef.params
       );
       result.education_sessions = result.education_students;

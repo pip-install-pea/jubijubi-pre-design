@@ -30,7 +30,7 @@ function pageTitle(pathname) {
 
 function pageSub(pathname) {
   if (pathname === '/') return 'Open a programme, then a chart for the rows behind the number.';
-  if (pathname?.startsWith('/health')) return 'Reach, disease mix, and clinic activity.';
+  if (pathname?.startsWith('/health')) return 'Healthcare Reach, Disease profile, and Service delivery';
   if (pathname?.startsWith('/livelihood/placement')) return 'Roster follow-up and field-sheet income.';
   if (pathname?.startsWith('/livelihood/enterprise')) return 'Members, market access, and financial-year profit.';
   if (pathname?.startsWith('/livelihood')) return 'Field sheet first, then the skill roster.';
@@ -76,7 +76,8 @@ function payloadFor(mod, filters) {
       state_id: filters.state_id,
       district_id: filters.district_id,
       year: filters.year,
-      gender: filters.gender
+      gender: filters.gender,
+      month: filters.month || ''
     };
   }
   if (mod === 'education') {
@@ -85,7 +86,8 @@ function payloadFor(mod, filters) {
       state_id: filters.state_id,
       district_id: filters.district_id,
       academic_year: ay,
-      financial_year: fy || ay
+      financial_year: fy || ay,
+      month: filters.month || ''
     };
   }
   if (mod === 'livelihood') {
@@ -135,7 +137,7 @@ function readUrl(searchParams, mod) {
     next.financial_year = clock;
   }
   const month = searchParams.get('month');
-  if (month && mod === 'livelihood') next.month = month;
+  if (month && (mod === 'livelihood' || mod === 'education' || mod === 'health')) next.month = month;
   return next;
 }
 
@@ -442,7 +444,18 @@ export default function GlobalFilters({ onApply }) {
               />
             )}
 
-            {moduleName === 'livelihood' && (
+            {moduleName === 'health' && (
+              <MultiSelect
+                label="Month"
+                name="month"
+                value={filters.month}
+                options={['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((name) => ({ id: name, name }))}
+                emptyLabel="All months"
+                onChange={setField}
+              />
+            )}
+
+            {(moduleName === 'livelihood' || moduleName === 'education') && (
               <MultiSelect
                 label="Month"
                 name="month"
