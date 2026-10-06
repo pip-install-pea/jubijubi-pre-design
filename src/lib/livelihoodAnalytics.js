@@ -1260,7 +1260,7 @@ export async function getMixprogramFarmers(filters) {
   const farmerWhere = whereStr([...yearClauses, `m.program_id::text IN ('1','2')`]);
   const otherWhere = whereStr([
     ...yearClauses,
-    `m.program_id::text NOT IN ('1','2','3','4','5','6','7','8','9','10','11','12')`
+    `m.program_id::text NOT IN ('1','2','3','4','5','6','7','8','9','10','11','12','15')`
   ]);
   const empty = {
     status: 'no_data',
