@@ -3,6 +3,7 @@ import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, bindIn, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
+import { getMixprogramSchools } from '@/lib/educationAnalytics.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { eduPlaceSql, excludeWowClause, EDU_SCHOOL_IDS, EDU_CASTE_IDS } from '@/lib/eduGeo.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -405,6 +406,45 @@ export async function GET(req) {
         { key: "activity_date", label: "Date" },
         { key: "student_count", label: "Students" },
       ];
+    }
+
+    if (drillType === 'mix_activities') {
+      const year = filters.academic_year || filters.financial_year;
+      const payload = await queryMixRows({
+        searchParams,
+        year,
+        q,
+        page,
+        perPage,
+        filters,
+        extraClauses: [`m.program_id::text = '6'`],
+        qSql: '(m.activity_name ILIKE :q OR m.month ILIKE :q)',
+        selectSql: `SELECT COALESCE(NULLIF(TRIM(m.activity_name), ''), '—') AS activity_name,
+          COALESCE(NULLIF(TRIM(m.month), ''), '—') AS month,
+          COALESCE(m.students_total, 0)::integer AS students_total`,
+        columns: [
+          { key: 'activity_name', label: 'Activity' },
+          { key: 'month', label: 'Month' },
+          { key: 'students_total', label: 'Students' }
+        ]
+      });
+      return NextResponse.json(payload);
+    }
+
+    if (drillType === 'mix_programs') {
+      const mix = await getMixprogramSchools(filters);
+      const rows = mix?.programs || [];
+      return NextResponse.json({
+        columns: [
+          { key: 'name', label: 'Program' },
+          { key: 'initiative', label: 'Initiative' },
+          { key: 'rows', label: 'Rows' }
+        ],
+        rows,
+        total: rows.length,
+        page: 1,
+        per_page: Math.max(rows.length, 1)
+      });
     }
 
     if (String(drillType).startsWith('mix_')) {

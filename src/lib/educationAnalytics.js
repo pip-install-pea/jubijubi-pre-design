@@ -10,6 +10,7 @@ import {
   EDU_CASTE_IDS,
   kkpNamesForStates
 } from './eduGeo.js';
+import { INITIATIVE_PROGRAMS, SCHOOL_NETWORK } from './educationInitiatives.js';
 
 const GEO = { module: 'education' };
 
@@ -523,6 +524,47 @@ export async function getMixprogramSchools(filters) {
     params
   );
 
+  const activityCountRows = await safeFetchall(
+    `SELECT COUNT(*)::integer AS rows
+     FROM education_mixprogram m
+     ${andPid(w, ['6'])}`,
+    params
+  );
+
+  const initiativePresence = await safeFetchall(
+    `SELECT m.program_id::text AS program_id, COUNT(*)::integer AS rows
+     FROM education_mixprogram m
+     ${andPid(w, INITIATIVE_PROGRAMS.map((program) => program.id))}
+     GROUP BY m.program_id`,
+    params
+  );
+  const initiativeById = new Map(initiativePresence.map((row) => [String(row.program_id), Number(row.rows) || 0]));
+  const programs = INITIATIVE_PROGRAMS
+    .filter((program) => (initiativeById.get(program.id) || 0) > 0)
+    .map((program) => ({
+      id: program.id,
+      name: program.name,
+      initiative: program.initiative,
+      rows: initiativeById.get(program.id) || 0,
+      participations: Boolean(program.participations)
+    }));
+
+  const networkPlaceRows = await safeFetchall(
+    `SELECT DISTINCT ${placeSql} AS place
+     FROM education_mixprogram m
+     ${andPid(w, EDU_SCHOOL_IDS)}
+       AND NULLIF(TRIM(m.school_name), '') IS NOT NULL`,
+    params
+  );
+  const networkPlaceSet = new Set(networkPlaceRows.map((row) => row.place));
+  const networkHits = SCHOOL_NETWORK.filter((row) => networkPlaceSet.has(row.place));
+  const network = {
+    locations: networkHits.length,
+    states: new Set(networkHits.map((row) => row.state)).size,
+    location_names: networkHits.map((row) => row.place),
+    state_names: [...new Set(networkHits.map((row) => row.state))]
+  };
+
   const locProg = await safeFetchall(
     `SELECT ${placeSql} AS location,
             COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS program,
@@ -603,8 +645,11 @@ export async function getMixprogramSchools(filters) {
     kkp2: { themes: kkp2Themes },
     muskaan_activity: {
       activities: muskaanActivities,
-      months: muskaanMonths
+      months: muskaanMonths,
+      rows: Number(activityCountRows[0]?.rows) || 0
     },
+    programs,
+    network,
     fellowship: {
       fellows: Number(fellowshipCountRows[0]?.fellows) || 0,
       gender: fellowshipGender

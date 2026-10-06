@@ -292,23 +292,54 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
   };
 }
 
-export function stackedBarOption(labels, datasets, { horizontal = false } = {}) {
+export function stackedBarOption(labels, datasets, { horizontal = false, rotateLabels = false, pctLabels = false } = {}) {
+  const totals = (labels || []).map((_, index) =>
+    (datasets || []).reduce((sum, ds) => sum + (Number(ds.data?.[index]) || 0), 0)
+  );
+  const categoryAxis = {
+    type: 'category',
+    data: labels,
+    axisLabel: rotateLabels
+      ? { rotate: 90, interval: 0 }
+      : { rotate: (labels || []).length > 6 ? 30 : 0 }
+  };
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: { bottom: 0 },
-    grid: { left: 8, right: 16, top: 24, bottom: 48, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    grid: {
+      left: 8,
+      right: 16,
+      top: pctLabels ? 36 : 24,
+      bottom: rotateLabels ? 140 : 48,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel'
+    },
     xAxis: horizontal
       ? { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
-      : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
+      : categoryAxis,
     yAxis: horizontal
-      ? { type: 'category', data: labels }
+      ? {
+          type: 'category',
+          data: labels,
+          ...(rotateLabels ? { axisLabel: { rotate: 90, interval: 0 } } : {})
+        }
       : { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
     series: (datasets || []).map((ds) => ({
       type: 'bar',
       name: ds.label,
       stack: 'total',
       emphasis: { focus: 'series' },
-      data: ds.data
+      data: ds.data,
+      label: pctLabels ? {
+        show: true,
+        formatter: (point) => {
+          const value = Number(point.value) || 0;
+          if (!value) return '';
+          const total = totals[point.dataIndex] || 0;
+          const pct = total ? ((value / total) * 100).toFixed(1) : '0.0';
+          return `${value.toLocaleString('en-IN')}\n${pct}%`;
+        }
+      } : undefined
     }))
   };
 }

@@ -18,6 +18,7 @@ import PageRail from '../../components/PageRail';
 import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { financialYearList } from '../../lib/phpRegistry.js';
 import { NAVY, SKY } from '../../lib/chartTheme';
+import { GraduationCap, Sun } from '@phosphor-icons/react';
 
 export default function EducationPage() {
   const [data, setData] = useState({
@@ -120,9 +121,6 @@ export default function EducationPage() {
   const kkpRows = kkpPicked
     ? kkpPicked.rows
     : (data.prePost?.status !== 'no_data' ? (data.prePost?.data || []) : []);
-  const kkpDelta = kkpRows.length
-    ? kkpRows.reduce((s, r) => s + (Number(r.avg_post) || 0) - (Number(r.avg_pre) || 0), 0) / kkpRows.length
-    : null;
   const showQuadrant = Array.isArray(data.quadrant?.points) && data.quadrant.points.length > 0;
   const showMuskaan = data.muskaan?.status !== 'no_data' && data.muskaan?.data?.length > 0;
 
@@ -166,17 +164,26 @@ export default function EducationPage() {
                 </div>
               </div>
             )}
-            <div className="kpi-card">
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('mix_programs', 'Total programs')}>
               <div className="kpi-body">
-                <div className="kpi-value">{mixByProgram.length}</div>
-                <div className="kpi-label">School programmes</div>
+                <div className="kpi-value">{(mix?.programs || []).length}</div>
+                <div className="kpi-label">Total programs</div>
+                <p className="kpi-caption">Programmes in the initiative list that have rows under these filters</p>
+              </div>
+            </div>
+            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('mix_activities', 'Activities covered')}>
+              <div className="kpi-body">
+                <div className="kpi-value">{Number(mix?.muskaan_activity?.rows || 0).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Activities covered</div>
+                <p className="kpi-caption">Muskaan activity rows</p>
               </div>
             </div>
             {Number(mixKpis.teachers) > 0 && (
               <div className="kpi-card">
                 <div className="kpi-body">
-                  <div className="kpi-value">{Number(mixKpis.teachers).toLocaleString('en-IN')}</div>
-                  <div className="kpi-label">Teachers reached</div>
+                <div className="kpi-value">{Number(mixKpis.teachers).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Teachers covered</div>
+                <p className="kpi-caption">Schools Working, Khusiyon ki Pathshala, Edulab, and HP CLAP. Library on Wheels is excluded because its teachers field holds student counts.</p>
                 </div>
               </div>
             )}
@@ -198,23 +205,14 @@ export default function EducationPage() {
             </div>
           </>
         )}
-        {kkpDelta != null && (
-          <>
-            <div className="kpi-card">
-              <div className="kpi-body">
-                <div className="kpi-value">{kkpDelta > 0 ? '+' : ''}{kkpDelta.toFixed(1)}</div>
-                <div className="kpi-label">Mean KKP gain</div>
-                <p className="kpi-caption">Post − pre, location scores, not students</p>
-              </div>
+        {kkpRows.length > 0 && (
+          <div className="kpi-card">
+            <div className="kpi-body">
+              <div className="kpi-value">{kkpRows.length}</div>
+              <div className="kpi-label">KKP values</div>
+              <p className="kpi-caption">Location-level skilltracking scores</p>
             </div>
-            <div className="kpi-card">
-              <div className="kpi-body">
-                <div className="kpi-value">{kkpRows.length}</div>
-                <div className="kpi-label">KKP values</div>
-                <p className="kpi-caption">Location-level skilltracking scores</p>
-              </div>
-            </div>
-          </>
+          </div>
         )}
         {mixKkp?.total_sessions > 0 && (
           <div className="kpi-card">
@@ -226,6 +224,44 @@ export default function EducationPage() {
         )}
       </div>
 
+      {mix?.network && (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Our School Network</h3>
+          </div>
+          <div className="card-body">
+            <div className="kpi-grid">
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{mix.network.locations}</div>
+                  <div className="kpi-label">School Locations</div>
+                  <p className="kpi-caption">{(mix.network.location_names || []).join(', ') || 'None of the five network locations under these filters'}</p>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <div className="kpi-value">{mix.network.states}</div>
+                  <div className="kpi-label">States Covered</div>
+                  <p className="kpi-caption">{(mix.network.state_names || []).join(', ') || 'None under these filters'}</p>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <GraduationCap size={28} weight="duotone" />
+                  <div className="kpi-label">Education – Focus Sector</div>
+                </div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-body">
+                  <Sun size={28} weight="duotone" />
+                  <div className="kpi-label">Brighter Futures – Our Commitment</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mix && (
         <>
           {(mixKpis.schools > 0 || mixByProgram.length > 0) && (
@@ -236,7 +272,7 @@ export default function EducationPage() {
               <div className="card-body">
                 <div className="card-row">
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Students by programme</h3></div>
+                    <div className="card-header"><h3>Program wise students</h3></div>
                     <div className="card-body">
                       <EChart
                         option={treemapOption(mixByProgram.map((r) => ({ label: r.label, value: r.students })), { name: 'Students' })}
@@ -246,7 +282,7 @@ export default function EducationPage() {
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Male and female by programme</h3></div>
+                    <div className="card-header"><h3>Gender Ratio program wise</h3></div>
                     <div className="card-body">
                       <EChart
                         option={stackedBarOption(
@@ -254,7 +290,8 @@ export default function EducationPage() {
                           [
                             { label: 'Male', data: mixByProgram.map((r) => r.male) },
                             { label: 'Female', data: mixByProgram.map((r) => r.female) }
-                          ]
+                          ],
+                          { rotateLabels: true, pctLabels: true }
                         )}
                         focus={focus}
                         onPoint={(p) => p.name && handleDrilldown('mix_program', p.name, {}, p.nativeEvent)}
@@ -264,7 +301,7 @@ export default function EducationPage() {
                 </div>
                 {mixSunburst.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location to programme</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Statewise programs</h3>
                     <EChart
                       option={sunburstOption(mixSunburst)}
                       height={380}
@@ -279,7 +316,7 @@ export default function EducationPage() {
                 )}
                 {mixProgramLocs.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Top locations in each programme</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location wise Program</h3>
                     <div className="program-loc-grid">
                       {mixProgramLocs.map((block) => (
                         <div key={block.program} className="program-loc-card">
@@ -303,7 +340,7 @@ export default function EducationPage() {
                 )}
                 {mixCaste.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Caste categories</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Category</h3>
                     <EChart
                       option={roseOption(mixCaste)}
                       onPoint={(p) => p.name && handleDrilldown('mix_caste', p.name)}
