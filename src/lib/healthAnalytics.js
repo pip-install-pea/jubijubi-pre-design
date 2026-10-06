@@ -1,5 +1,7 @@
 import { fetchall, scalar, isDatabaseConfigured } from './db.js';
 import { bindIn, buildFilters, splitList, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { foldSql } from './labelNorm.js';
+import { summariseSymptomMix } from './symptomCategories.js';
 import { postPhpEnvelope } from './phpClient.js';
 import { API_BASE, DEFAULT_YEAR, SYMPTOM_PATHS } from './phpRegistry.js';
 
@@ -250,6 +252,11 @@ function calendarYear(filters) {
   return years.length ? years.join(',') : String(DEFAULT_YEAR);
 }
 
+/** Blank Year and the default year share one calendar year on every Health query. */
+export function healthFilters(filters = {}) {
+  return { ...filters, year: calendarYear(filters) };
+}
+
 function mapDiseaseRows(rows) {
   return (rows || [])
     .map((r) => ({
@@ -409,12 +416,13 @@ export async function getReach(filters) {
     );
   }
 
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = buildFilters(healthFilters(filters), {
     date_col: 'created_at',
     state_col: 'state_id',
     district_col: 'district_id',
     partner_col: 'partner_id',
     gender_col: 'gender',
+    calendar_month: true,
     ...GEO
   });
   const w = whereStr(clauses);
@@ -444,10 +452,12 @@ export async function getReach(filters) {
 }
 
 function buildDiseaseYoY(thisMix, lastMix, thisYear, lastYear) {
-  if (!lastMix?.length || !thisMix?.length) return [];
+  if (!lastMix?.length || !thisMix?.length) return { rows: [], last_total: 0, this_total: 0 };
   const lastMap = new Map(lastMix.map((r) => [r.disease, r.patients]));
   const names = new Set([...thisMix.map((r) => r.disease), ...lastMix.map((r) => r.disease)]);
-  return [...names]
+  const lastTotal = lastMix.reduce((sum, row) => sum + num(row.patients), 0);
+  const thisTotal = thisMix.reduce((sum, row) => sum + num(row.patients), 0);
+  const rows = [...names]
     .map((disease) => ({
       disease,
       last_year: lastMap.get(disease) || 0,
@@ -457,6 +467,7 @@ function buildDiseaseYoY(thisMix, lastMix, thisYear, lastYear) {
     }))
     .sort((a, b) => b.this_year - a.this_year || b.last_year - a.last_year)
     .slice(0, 12);
+  return { rows, last_total: lastTotal, this_total: thisTotal };
 }
 
 async function latestDiseaseYears() {
@@ -469,6 +480,164 @@ async function latestDiseaseYears() {
      LIMIT 2`
   );
   return rows.map((row) => String(row.year));
+}
+
+const AGE_BANDS = ['0-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'Age not recorded'];
+const CALENDAR_MONTH_LABELS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function halfYearFilters(filters, year) {
+  return { ...healthFilters(filters), year: String(year), half: 'H1', month: null };
+}
+
+async function loadProfileCharts(filters) {
+  const empty = {
+    age_bands: [],
+    age_total: 0,
+    gender_mix: [],
+    patients_by_month: [],
+    h1_patients: [],
+    h1_diseases: { rows: [], n_2025: 0, n_2026: 0 }
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const { clauses, params } = buildFilters(healthFilters(filters), {
+    date_col: 'p.created_at',
+    state_col: 'p.state_id',
+    district_col: 'p.district_id',
+    partner_col: 'p.partner_id',
+    calendar_month: true,
+    ...GEO
+  });
+  const w = whereStr(clauses);
+  const ageRows = await safeFetchall(
+    `SELECT band, sex, COUNT(*)::integer AS n
+     FROM (
+       SELECT
+         CASE
+           WHEN p.age IS NULL OR btrim(p.age::text) = '' OR p.age::text !~ '^[0-9]+$' THEN 'Age not recorded'
+           WHEN p.age::integer BETWEEN 0 AND 17 THEN '0-17'
+           WHEN p.age::integer BETWEEN 18 AND 24 THEN '18-24'
+           WHEN p.age::integer BETWEEN 25 AND 34 THEN '25-34'
+           WHEN p.age::integer BETWEEN 35 AND 44 THEN '35-44'
+           WHEN p.age::integer BETWEEN 45 AND 54 THEN '45-54'
+           WHEN p.age::integer BETWEEN 55 AND 64 THEN '55-64'
+           WHEN p.age::integer >= 65 THEN '65+'
+           ELSE 'Age not recorded'
+         END AS band,
+         CASE
+           WHEN upper(btrim(COALESCE(p.gender::text, ''))) IN ('M', 'MALE') THEN 'Male'
+           WHEN upper(btrim(COALESCE(p.gender::text, ''))) IN ('F', 'FEMALE') THEN 'Female'
+           ELSE 'Other'
+         END AS sex
+       FROM health_profile_patients p
+       ${w}
+     ) people
+     GROUP BY band, sex`,
+    params
+  );
+  const ageBands = AGE_BANDS.map((band) => {
+    const pick = (sex) => num(ageRows.find((row) => row.band === band && row.sex === sex)?.n);
+    return { band, male: pick('Male'), female: pick('Female'), other: pick('Other') };
+  });
+  const genderRows = await safeFetchall(
+    `SELECT
+       CASE
+         WHEN upper(btrim(COALESCE(p.gender::text, ''))) IN ('M', 'MALE') THEN 'Male'
+         WHEN upper(btrim(COALESCE(p.gender::text, ''))) IN ('F', 'FEMALE') THEN 'Female'
+         WHEN upper(btrim(COALESCE(p.gender::text, ''))) IN ('O', 'OTHER') THEN 'Other'
+         WHEN btrim(COALESCE(p.gender::text, '')) = '' THEN 'Not recorded'
+         ELSE 'Other'
+       END AS label,
+       COUNT(*)::integer AS value
+     FROM health_profile_patients p
+     ${w}
+     GROUP BY 1
+     ORDER BY value DESC`,
+    params
+  );
+  const monthFilter = profilePatientFilter(filters, { applyMonth: false });
+  const monthRows = await safeFetchall(
+    `SELECT SUBSTR(p.created_at::text, 6, 2) AS month_num, COUNT(*)::integer AS value
+     FROM health_profile_patients p
+     ${whereStr(monthFilter.clauses)}
+     GROUP BY 1`,
+    monthFilter.params
+  );
+  const byNum = new Map(monthRows.map((row) => [String(row.month_num), num(row.value)]));
+  const patientsByMonth = CALENDAR_MONTH_LABELS.map((label, index) => ({
+    label,
+    value: byNum.get(String(index + 1).padStart(2, '0')) || 0
+  }));
+
+  async function halfPatients(year) {
+    const built = buildFilters(halfYearFilters(filters, year), {
+      date_col: 'created_at',
+      state_col: 'state_id',
+      district_col: 'district_id',
+      partner_col: 'partner_id',
+      gender_col: 'gender',
+      ...GEO
+    });
+    return safeScalar(
+      `SELECT COALESCE(COUNT(*), 0)::integer FROM health_profile_patients ${whereStr(built.clauses)}`,
+      built.params
+    );
+  }
+  async function halfDiseases(year) {
+    const built = buildFilters(halfYearFilters(filters, year), {
+      date_col: 'created_at',
+      state_col: 'state_id',
+      district_col: 'district_id',
+      partner_col: 'partner_id',
+      ...GEO
+    });
+    const clauses = [...built.clauses, `NULLIF(btrim(COALESCE(disease::text, '')), '') IS NOT NULL`];
+    const rows = await safeFetchall(
+      `SELECT COALESCE(NULLIF(btrim(disease::text), ''), 'Disease not recorded') AS label,
+              COUNT(*)::integer AS value
+       FROM health_patient_appointments
+       ${whereStr(clauses)}
+       GROUP BY 1
+       ORDER BY value DESC`,
+      built.params
+    );
+    return {
+      n: rows.reduce((sum, row) => sum + num(row.value), 0),
+      rows
+    };
+  }
+  const [h1_2025, h1_2026, disease2025, disease2026] = await Promise.all([
+    halfPatients('2025'),
+    halfPatients('2026'),
+    halfDiseases('2025'),
+    halfDiseases('2026')
+  ]);
+  const diseaseNames = [...new Set([
+    ...disease2025.rows.slice(0, 8).map((row) => row.label),
+    ...disease2026.rows.slice(0, 8).map((row) => row.label)
+  ])];
+  const count2025 = new Map(disease2025.rows.map((row) => [row.label, num(row.value)]));
+  const count2026 = new Map(disease2026.rows.map((row) => [row.label, num(row.value)]));
+
+  return {
+    age_bands: ageBands,
+    age_total: ageBands.reduce((sum, row) => sum + row.male + row.female + row.other, 0),
+    gender_mix: genderRows.map((row) => ({ label: row.label, value: num(row.value) })),
+    patients_by_month: patientsByMonth,
+    h1_patients: [
+      { label: 'H1 2025', value: num(h1_2025) },
+      { label: 'H1 2026', value: num(h1_2026) }
+    ],
+    h1_diseases: {
+      rows: diseaseNames.map((label) => ({
+        label,
+        h1_2025: count2025.get(label) || 0,
+        h1_2026: count2026.get(label) || 0
+      })),
+      n_2025: disease2025.n,
+      n_2026: disease2026.n
+    }
+  };
 }
 
 export async function getDepth(filters) {
@@ -535,19 +704,19 @@ export async function getDepth(filters) {
   }
   const diseaseYoY = yoyThis && yoyLast
     ? buildDiseaseYoY(yoyThisMix, yoyLastMix, yoyThis, yoyLast)
-    : [];
+    : { rows: [], last_total: 0, this_total: 0 };
 
   let totalAppts = 0;
-  let repeatPct = 0;
   let feesCollected = 0;
   let appointmentsAvailable = false;
 
   if (isDatabaseConfigured()) {
-    const { clauses, params } = buildFilters(filters, {
+    const { clauses, params } = buildFilters(healthFilters(filters), {
       date_col: 'created_at',
       state_col: 'state_id',
       district_col: 'district_id',
       partner_col: 'partner_id',
+      calendar_month: true,
       ...GEO
     });
     const extraDate = validDateClause('created_at');
@@ -556,20 +725,6 @@ export async function getDepth(filters) {
       `SELECT COALESCE(COUNT(*), 0)::integer FROM health_patient_appointments ${w}`,
       params
     );
-    const repeatCount = await safeScalar(`
-      SELECT COALESCE(COUNT(*), 0)::integer FROM (
-        SELECT profile_patient_id
-        FROM health_patient_appointments ${w}
-        GROUP BY profile_patient_id HAVING COUNT(*) > 1
-      ) t
-    `, params);
-    const totalPatientsForRepeat = await safeScalar(`
-      SELECT COALESCE(COUNT(DISTINCT profile_patient_id), 0)::integer
-      FROM health_patient_appointments ${w}
-    `, params);
-    repeatPct = totalPatientsForRepeat > 0
-      ? parseFloat((repeatCount / totalPatientsForRepeat * 100).toFixed(2))
-      : 0.0;
     feesCollected = await safeScalar(`
       SELECT COALESCE(SUM(CASE WHEN paid_amount ~ '^[0-9.]+$' THEN paid_amount::numeric ELSE 0 END), 0)
       FROM health_patient_appointments ${w}
@@ -577,8 +732,11 @@ export async function getDepth(filters) {
     appointmentsAvailable = totalAppts > 0;
   }
 
+  const charts = await loadProfileCharts(filters);
+  const symptomView = summariseSymptomMix(symptoms.mix);
+
   return {
-    repeat_patient_pct: appointmentsAvailable ? repeatPct : null,
+    effective_year: year,
     total_appointments: appointmentsAvailable ? totalAppts : null,
     fees_collected: appointmentsAvailable ? Number(feesCollected || 0) : null,
     appointments_available: appointmentsAvailable,
@@ -586,18 +744,24 @@ export async function getDepth(filters) {
     disease_share: shareSlices(disease.mix, 'disease'),
     symptom_mix: symptoms.mix,
     symptom_share: shareSlices(symptoms.mix, 'symptom'),
-    disease_yoy: diseaseYoY,
+    disease_yoy: diseaseYoY.rows,
+    disease_yoy_last_total: diseaseYoY.last_total,
+    disease_yoy_this_total: diseaseYoY.this_total,
     disease_mix_year: disease.year,
     total_diseases: disease.total_diseases,
     total_symptoms: symptoms.total_symptoms,
+    symptom_view: symptomView,
+    ...charts,
     avg_satisfaction: null
   };
 }
 
 export async function getInclusion(filters) {
+  const effectiveYear = calendarYear(filters);
   if (!isDatabaseConfigured()) {
     return {
       available: false,
+      effective_year: effectiveYear,
       community_interventions: [],
       senior_citizens: null,
       people_with_disability: null,
@@ -605,12 +769,13 @@ export async function getInclusion(filters) {
     };
   }
 
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = buildFilters(healthFilters(filters), {
     date_col: 'created_at',
     state_col: 'state_id',
     district_col: 'district_id',
     partner_col: 'partner_id',
     gender_col: 'gender',
+    calendar_month: true,
     ...GEO
   });
   const w = whereStr(clauses);
@@ -626,15 +791,21 @@ export async function getInclusion(filters) {
       ORDER BY cnt DESC
     `, params);
 
-    const communityInterventions = communityRows
-      .filter(r => r.community !== '' && r.community !== null)
-      .map(r => ({ community: r.community, count: r.cnt }));
+    const categoryCounts = new Map();
+    communityRows.forEach((row) => {
+      const label = categoryLabel(row.community);
+      categoryCounts.set(label, (categoryCounts.get(label) || 0) + num(row.cnt));
+    });
+    const communityInterventions = [...categoryCounts.entries()]
+      .map(([community, count]) => ({ community, count }))
+      .sort((a, b) => b.count - a.count);
 
     const rows = await fetchall(`
       SELECT
         COALESCE(COUNT(CASE WHEN CASE WHEN age ~ '^[0-9]+$' THEN age::integer ELSE 0 END >= 60 THEN 1 END), 0)::integer   AS seniors,
         COALESCE(COUNT(CASE WHEN disability = 'Yes' THEN 1 END), 0)::integer            AS disabled,
-        COALESCE(COUNT(CASE WHEN gender = 'F' THEN 1 END), 0)::integer                  AS women
+        COALESCE(COUNT(CASE WHEN gender = 'F' THEN 1 END), 0)::integer                  AS women,
+        COALESCE(COUNT(*), 0)::integer                                                  AS patients
       FROM health_profile_patients
       ${w}
     `, params);
@@ -642,6 +813,8 @@ export async function getInclusion(filters) {
 
     return {
       available: true,
+      effective_year: effectiveYear,
+      patient_total: num(row.patients),
       community_interventions: communityInterventions,
       senior_citizens: row.seniors,
       people_with_disability: row.disabled,
@@ -651,6 +824,7 @@ export async function getInclusion(filters) {
     console.warn('[healthAnalytics] inclusion skipped:', err.message);
     return {
       available: false,
+      effective_year: effectiveYear,
       community_interventions: [],
       senior_citizens: null,
       people_with_disability: null,
@@ -687,6 +861,7 @@ export async function getHealthGeoBenchmarks(filters) {
     district_col: 'p.district_id',
     gender_col: 'p.gender',
     partner_col: 'p.partner_id',
+    calendar_month: true,
     ...GEO
   };
 
@@ -710,7 +885,7 @@ export async function getHealthGeoBenchmarks(filters) {
     : `GROUP BY p.state_id`;
 
   const run = async (f, limit) => {
-    const { clauses, params } = buildFilters(f, opts);
+    const { clauses, params } = buildFilters(healthFilters(f), opts);
     const lim = limit ? `LIMIT ${Number(limit)}` : '';
     return safeFetchall(
       `SELECT ${joinSelect},
@@ -729,7 +904,7 @@ export async function getHealthGeoBenchmarks(filters) {
     const [peerRows, programmeRows] = await Promise.all([run(peerFilters), run(programmeFilters)]);
     const stateAverage = grain === 'district' ? mean(peerRows.map((r) => r.value)) : 0;
     const programmeAverage = mean(programmeRows.map((r) => r.value));
-    const display = (grain === 'district' ? peerRows : programmeRows).slice(0, 12);
+    const display = grain === 'district' ? peerRows : programmeRows;
     return {
       grain,
       unit: 'patients',
@@ -743,4 +918,134 @@ export async function getHealthGeoBenchmarks(filters) {
     console.warn('[healthAnalytics] geo benchmarks skipped:', err.message);
     return empty;
   }
+}
+
+function profilePatientFilter(filters, { applyMonth = true } = {}) {
+  const scoped = applyMonth ? filters : { ...filters, month: null };
+  return buildFilters(healthFilters(scoped), {
+    date_col: 'p.created_at',
+    state_col: 'p.state_id',
+    district_col: 'p.district_id',
+    partner_col: 'p.partner_id',
+    gender_col: 'p.gender',
+    calendar_month: true,
+    ...GEO
+  });
+}
+
+function categoryLabel(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text || text.toLowerCase() === 'unknown') return 'Not recorded';
+  const fold = text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (fold === 'sc') return 'SC';
+  if (fold === 'st') return 'ST';
+  if (fold === 'obc') return 'OBC';
+  if (fold === 'general' || fold === 'gen') return 'General';
+  if (/^\d+$/.test(text)) return `Code ${text} (unmapped)`;
+  return text;
+}
+
+export async function listHealthVillages(filters) {
+  if (!isDatabaseConfigured()) return [];
+  const { clauses, params } = profilePatientFilter(filters);
+  return safeFetchall(
+    `SELECT COALESCE(NULLIF(btrim(v.name), ''), 'Village not recorded') AS village,
+            COUNT(*)::integer AS patients
+     FROM health_profile_patients p
+     LEFT JOIN health_village v ON v.source_id::text = p.village_id::text
+     ${whereStr(clauses)}
+     GROUP BY COALESCE(v.source_id::text, ''), COALESCE(NULLIF(btrim(v.name), ''), 'Village not recorded')
+     ORDER BY patients DESC`,
+    params
+  );
+}
+
+export async function listHealthDoctors(filters) {
+  const empty = { doctors: 0, doctors_follow_geo: false, rows: [] };
+  if (!isDatabaseConfigured()) return empty;
+  const fill = await safeFetchall(
+    `SELECT COUNT(*)::integer AS active,
+            COUNT(*) FILTER (WHERE NULLIF(btrim(state_id::text), '') IS NOT NULL)::integer AS with_state
+     FROM health_profile_doctors
+     WHERE del_action = 'N'`
+  );
+  const active = Number(fill[0]?.active) || 0;
+  const withState = Number(fill[0]?.with_state) || 0;
+  const doctorsFollowGeo = active > 0 && withState / active >= 0.95;
+  const doctorClauses = [`d.del_action = 'N'`];
+  const doctorParams = {};
+  if (doctorsFollowGeo) {
+    const built = buildFilters(filters, {
+      state_col: 'd.state_id',
+      district_col: 'd.district_id',
+      ...GEO
+    });
+    doctorClauses.push(...built.clauses);
+    Object.assign(doctorParams, built.params);
+  }
+  const where = whereStr(doctorClauses);
+  const doctors = await safeScalar(
+    `SELECT COUNT(DISTINCT ${foldSql('d.doctor_name')})::integer
+     FROM health_profile_doctors d
+     ${where}`,
+    doctorParams
+  );
+  const rows = await safeFetchall(
+    `SELECT COALESCE(NULLIF(btrim(hp.name), ''), 'Partner not recorded') AS partner,
+            COALESCE(NULLIF(btrim(d.specialization), ''), 'Specialization not recorded') AS specialization,
+            COUNT(DISTINCT ${foldSql('d.doctor_name')})::integer AS doctors
+     FROM health_profile_doctors d
+     LEFT JOIN health_partner hp ON hp.source_id::text = d.partner_id::text
+     ${where}
+     GROUP BY 1, 2
+     ORDER BY doctors DESC`,
+    doctorParams
+  );
+  return {
+    doctors: Number(doctors) || 0,
+    doctors_follow_geo: doctorsFollowGeo,
+    rows
+  };
+}
+
+export async function getHealthService(filters) {
+  const empty = {
+    districts: 0,
+    pregnant_women: 0,
+    doctors: 0,
+    doctors_follow_geo: false,
+    top_villages: [],
+    other_villages: 0,
+    other_village_patients: 0,
+    village_patient_total: 0
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const { clauses, params } = profilePatientFilter(filters);
+  const profile = await safeFetchall(
+    `SELECT COUNT(DISTINCT NULLIF(btrim(p.district_id::text), ''))::integer AS districts,
+            COUNT(*) FILTER (WHERE p.female_is_pregnant = 'Y')::integer AS pregnant
+     FROM health_profile_patients p
+     ${whereStr(clauses)}`,
+    params
+  );
+  const [villages, doctorList] = await Promise.all([
+    listHealthVillages(filters),
+    listHealthDoctors(filters)
+  ]);
+  const top = villages.slice(0, 15).map((row) => ({
+    label: row.village,
+    value: Number(row.patients) || 0
+  }));
+  const rest = villages.slice(15);
+  return {
+    districts: Number(profile[0]?.districts) || 0,
+    pregnant_women: Number(profile[0]?.pregnant) || 0,
+    doctors: doctorList.doctors,
+    doctors_follow_geo: doctorList.doctors_follow_geo,
+    top_villages: top,
+    other_villages: rest.length,
+    other_village_patients: rest.reduce((sum, row) => sum + (Number(row.patients) || 0), 0),
+    village_patient_total: villages.reduce((sum, row) => sum + (Number(row.patients) || 0), 0)
+  };
 }

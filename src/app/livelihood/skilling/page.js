@@ -30,6 +30,7 @@ const SHEET_GENDER_COLORS = {
   Others: '#0f766e'
 };
 import DrilldownModal from '../../../components/DrilldownModal';
+import FilterTags from '../../../components/FilterTag';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
@@ -164,6 +165,7 @@ export default function SkillingPage() {
         axios.get(`/api/livelihood/skilling/benchmarks?${query}`)
       ]);
       let mixSkilling = { data: { status: 'no_data' } };
+      let hpWow = { data: { status: 'no_data' } };
       try {
         mixSkilling = await axios.get(`/api/livelihood/mixprogram/skilling?${query}`);
       } catch {
@@ -173,6 +175,11 @@ export default function SkillingPage() {
         axios.get(`/api/livelihood/decisions/age?${query}`).catch(() => ({ data: { status: 'no_data' } })),
         axios.get(`/api/livelihood/decisions/gender?${query}`).catch(() => ({ data: { status: 'no_data' } }))
       ]);
+      try {
+        hpWow = await axios.get(`/api/livelihood/mixprogram/hpwow?${query}`);
+      } catch {
+        hpWow = { data: { status: 'no_data' } };
+      }
       setData({
         beneficiaries: beneficiaries.data,
         income: income.data,
@@ -182,7 +189,8 @@ export default function SkillingPage() {
         benchmarks: benchmarks.data,
         mixSkilling: mixSkilling.data,
         traineeAges: traineeAges.data,
-        programmeGender: programmeGender.data
+        programmeGender: programmeGender.data,
+        hpWow: hpWow.data
       });
     } catch (err) {
       console.error('Skilling data load failed', err);
@@ -273,6 +281,7 @@ export default function SkillingPage() {
       </PageRail>
       {data && (
         <>
+          <h1 style={{ fontSize: '22px', fontWeight: 700, margin: '4px 0 16px' }}>Skill Development Stats</h1>
           <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '8px 0 12px' }}>Training & Course Portfolio</h2>
           <p className="chart-caption">Course and location counts come from the M&E field sheet. Roster, batches, and trades come from the skill-tracking app. The two sources are not merged.</p>
           <div className="kpi-grid">
@@ -285,6 +294,7 @@ export default function SkillingPage() {
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-label"><GraduationCap size={16} style={{ marginRight: 6 }} />Skilling courses (batches)</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   <div>
@@ -319,6 +329,7 @@ export default function SkillingPage() {
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{fmt(roster)}</div>
                 <div className="kpi-label">Skill roster</div>
                 <p className="kpi-caption">People on the skill-tracking app (n = {fmt(roster)}). {rosterMonthNote}</p>
@@ -351,6 +362,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Trade-wise candidates</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Candidates on the skill roster, by trade. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
@@ -370,6 +382,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Trade-wise batches</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Each bar counts batches, not people. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
@@ -389,6 +402,7 @@ export default function SkillingPage() {
                 </span>
               </div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">
                   Candidates on the skill roster, compared with the mean of {grain}s that have a recorded {grain}.
@@ -414,6 +428,7 @@ export default function SkillingPage() {
             {womenPct != null && (
               <div className="kpi-card">
                 <div className="kpi-body">
+                  <FilterTags allYears />
                   <div className="kpi-value">{womenPct}%</div>
                   <div className="kpi-label">Women participation</div>
                   <p className="kpi-caption">Women as a share of the skill-roster headcount (n = {fmt(roster)}). Skill-tracking app. {rosterMonthNote}</p>
@@ -422,6 +437,7 @@ export default function SkillingPage() {
             )}
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{fmt(womenCount)}</div>
                 <div className="kpi-label">Women on roster</div>
                 <p className="kpi-caption">Female candidates on the skill roster. Skill-tracking app. {rosterMonthNote}</p>
@@ -449,6 +465,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Gender ratio</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Gender on the skill roster. Blank gender is included. Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut
@@ -502,6 +519,7 @@ export default function SkillingPage() {
           <div className="card">
             <div className="card-header"><h3>Age bracket of all trainees</h3></div>
             <div className="card-body">
+              <FilterTags allYears />
               <p className="kpi-caption">Skill-tracking app · n = {formatCount(data?.traineeAges?.total)}</p>
               <p className="chart-caption">
                 All years. The skill roster has no financial-year field, so this card does not follow the year filter.
@@ -551,6 +569,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Employment outcomes of candidates</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Follow-up work status (n = {formatCount(data.beneficiaries?.monitored_people)} people). Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut
@@ -595,6 +614,7 @@ export default function SkillingPage() {
               <div className="kpi-body">
                 <div className="kpi-value">{formatINR(data.mixSkilling?.avg_post)}</div>
                 <div className="kpi-label">Post Income</div>
+                <p className="kpi-caption">(Enhancement in income status post completion of course)</p>
                 <p className="kpi-caption">Average of candidates with a recorded income (n = {formatCount(data.mixSkilling?.with_post)}). M&E field sheet. Zero and blank values are left out.</p>
               </div>
             </div>
@@ -662,6 +682,75 @@ export default function SkillingPage() {
                 />
               </div>
             </div>
+          )}
+
+          {data.hpWow?.status === 'ok' && (
+            <>
+              <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '28px 0 12px' }}>School-based skilling: HP WOW</h2>
+              <p className="chart-caption">HP WOW · Nanjangud, Karnataka · school sheet (no placement data)</p>
+              <div className="kpi-grid">
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('hpwow_school')}>
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.students)}</div>
+                    <div className="kpi-label">Students</div>
+                  </div>
+                </div>
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('hpwow_school')}>
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.schools)}</div>
+                    <div className="kpi-label">Schools</div>
+                  </div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-body">
+                    <div className="kpi-value">{data.hpWow.girls_pct == null ? '—' : `${data.hpWow.girls_pct}%`}</div>
+                    <div className="kpi-label">Girls share</div>
+                    <p className="kpi-caption">Female {formatCount(data.hpWow.female)} · Male {formatCount(data.hpWow.male)}</p>
+                  </div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.teachers)}</div>
+                    <div className="kpi-label">Teachers covered</div>
+                  </div>
+                </div>
+              </div>
+              <div className="card-row">
+                <div className="card">
+                  <div className="card-header"><h3>Students by month</h3></div>
+                  <div className="card-body">
+                    <ColumnBar
+                      labels={(data.hpWow.by_month || []).map((row) => row.label)}
+                      values={(data.hpWow.by_month || []).map((row) => row.value)}
+                      axisTitle="Students"
+                    />
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="card-header"><h3>Gender</h3></div>
+                  <div className="card-body">
+                    <BrandDoughnut
+                      labels={(data.hpWow.by_gender || []).map((row) => row.label)}
+                      values={(data.hpWow.by_gender || []).map((row) => row.value)}
+                      percent
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-header"><h3>Category</h3></div>
+                <div className="card-body">
+                  <BrandDoughnut
+                    labels={(data.hpWow.by_category || []).map((row) => row.label)}
+                    values={(data.hpWow.by_category || []).map((row) => row.value)}
+                    percent
+                  />
+                  {data.hpWow.not_categorised > 0 && (
+                    <p className="chart-caption">Not categorised: {formatCount(data.hpWow.not_categorised)} students, after deduping category counts per school.</p>
+                  )}
+                </div>
+              </div>
+            </>
           )}
         </>
       )}

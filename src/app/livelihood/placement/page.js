@@ -8,6 +8,7 @@ import ColumnBar from '../../../components/charts/ColumnBar';
 import FunnelBars from '../../../components/charts/FunnelBars';
 import EChart, { groupedBarOption } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
+import FilterTags from '../../../components/FilterTag';
 import { formatCount, formatINR, formatINRFull, formatPercent } from '../../../lib/format';
 
 const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
@@ -163,22 +164,24 @@ export default function PlacementPage() {
           <div className="kpi-grid">
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('funnel', 'monitored')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{fmt(data.status?.people)}</div>
                 <div className="kpi-label">People monitored</div>
-                <p className="kpi-caption">Distinct people with a follow-up. All years. {fmt(data.status?.total)} follow-up rows.</p>
+                <p className="kpi-caption">Distinct people with a follow-up. {fmt(data.status?.total)} follow-up rows.</p>
               </div>
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('placement_status', 'Working')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">
                   {data.status?.breakdown?.find(r => r.status === 'Working')?.percent || '—'}%
                 </div>
                 <div className="kpi-label">Share working</div>
-                <p className="kpi-caption">All years</p>
               </div>
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{formatINR(data.yoy?.[data.yoy.length - 1]?.median_income)}</div>
                 <div className="kpi-label">Typical post income</div>
                 <p className="kpi-caption">Median post income in the latest year on the chart. Zero and blank values are left out.</p>
@@ -190,7 +193,8 @@ export default function PlacementPage() {
             <div className="card">
               <div className="card-header"><h3>Work status</h3></div>
               <div className="card-body">
-                <p className="chart-caption">All years. Skill-tracking follow-ups, split by gender. The slices add up to {formatCount(data.status?.total)}.</p>
+                <FilterTags allYears />
+                <p className="chart-caption">Skill-tracking follow-ups, split by gender. The slices add up to {formatCount(data.status?.total)}.</p>
                 <div className="card-row">
                   {(data.status?.by_gender || []).map((group) => (
                     <BrandDoughnut
@@ -276,6 +280,7 @@ export default function PlacementPage() {
           <div className="card" style={{ marginTop: '24px' }}>
             <div className="card-header"><h3>Enrolled → Trained → Placed/Self-employed → Earning</h3></div>
             <div className="card-body">
+              <FilterTags allYears />
               <FunnelBars
                 stages={data.outcomeFunnel?.stages || []}
                 caption="M&E field sheet. Earning = placed candidates with a recorded post-training income above zero."
@@ -302,9 +307,10 @@ export default function PlacementPage() {
             <div className="card">
               <div className="card-header"><h3>Median time to first employment</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-value">{data.distributions?.median_days == null ? '—' : `${formatCount(data.distributions.median_days)} days`}</p>
                 <p className="chart-caption">
-                  All years. Skill-tracking follow-ups only (n = {formatCount(data.distributions?.n)}). The M&E sheet has no placement date.
+                  Skill-tracking follow-ups only (n = {formatCount(data.distributions?.n)}). The M&E sheet has no placement date.
                   {(data.distributions?.excluded_bad_date || 0) + (data.distributions?.excluded_negative || 0) > 0
                     ? ` Left out: ${formatCount(data.distributions?.excluded_bad_date)} with a 1970 or blank-era date, ${formatCount(data.distributions?.excluded_negative)} with a negative gap.`
                     : ''}
@@ -337,6 +343,7 @@ export default function PlacementPage() {
           <div className="card" style={{ marginTop: '24px' }}>
             <div className="card-header"><h3>Average Monthly Post-Training Income by Year</h3></div>
             <div className="card-body">
+              <FilterTags allYears />
               <p className="chart-caption">All years. Average of candidates with a recorded post-training income (n per year shown). Zero and blank values are left out.</p>
               <EChart
                 option={{

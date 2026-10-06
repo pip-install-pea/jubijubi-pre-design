@@ -3,6 +3,7 @@ import { bindIn, buildFilters, financialYearAliases, whereStr, stripDistrict, st
 import { MIX_CANONICAL_ROW } from './educationAnalytics.js';
 import { foldSql, foldKey, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
 import { summariseEmployers } from './employerMap.js';
+import { eduPlaceSql } from './eduGeo.js';
 
 const GEO = { module: 'livelihood' };
 
@@ -1260,7 +1261,7 @@ export async function getMixprogramFarmers(filters) {
   const farmerWhere = whereStr([...yearClauses, `m.program_id::text IN ('1','2')`]);
   const otherWhere = whereStr([
     ...yearClauses,
-    `m.program_id::text NOT IN ('1','2','3','4','5','6','7','8','9','10','11','12')`
+    `m.program_id::text NOT IN ('1','2','3','4','5','6','7','8','9','10','11','12','15')`
   ]);
   const empty = {
     status: 'no_data',
@@ -1592,6 +1593,89 @@ export async function getMixprogramDidi(filters) {
     };
   } catch (err) {
     console.warn('[livelihoodAnalytics] mixprogram didi skipped:', err.message);
+    return empty;
+  }
+}
+
+const HP_MONTH_ORDER = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
+
+export async function getMixprogramHpWow(filters) {
+  const { clauses, params } = mixYearClauses(filters);
+  clauses.push(`m.program_id::text = '10'`);
+  const monthClause = monthFilterSql('m.month', filters, params, { textMonth: true });
+  if (monthClause) clauses.push(monthClause);
+  const w = whereStr(clauses);
+  const place = eduPlaceSql();
+  const empty = { status: 'no_data' };
+  try {
+    const schools = await fetchall(
+      `SELECT ${place} AS place,
+              ${foldSql('m.school_name')} AS school_key,
+              MAX(NULLIF(btrim(m.school_name), '')) AS school_name,
+              MAX(m.students_total) AS students_total,
+              MAX(m.students_male) AS students_male,
+              MAX(m.students_female) AS students_female,
+              MAX(m.teachers_reached) AS teachers_reached,
+              MAX(m.category_gen) AS category_gen,
+              MAX(m.category_sc_st) AS category_sc_st,
+              MAX(m.category_obc) AS category_obc,
+              MAX(m.category_ebc) AS category_ebc
+       FROM education_mixprogram m
+       ${w}
+         AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+       GROUP BY 1, 2`,
+      params
+    );
+    if (!schools.length) return empty;
+    const sum = (key) => schools.reduce((total, row) => total + (Number(row[key]) || 0), 0);
+    const students = sum('students_total');
+    const male = sum('students_male');
+    const female = sum('students_female');
+    const sex = male + female;
+    const gen = sum('category_gen');
+    const scSt = sum('category_sc_st');
+    const obc = sum('category_obc');
+    const ebc = sum('category_ebc');
+    const categorised = gen + scSt + obc + ebc;
+    const notCategorised = Math.max(0, students - categorised);
+    const months = await fetchall(
+      `SELECT COALESCE(NULLIF(btrim(m.month), ''), 'Not recorded') AS label,
+              COALESCE(SUM(m.students_total), 0)::integer AS value
+       FROM education_mixprogram m
+       ${w}
+       GROUP BY 1`,
+      params
+    );
+    months.sort((a, b) => {
+      const ai = HP_MONTH_ORDER.findIndex((name) => name.toLowerCase() === String(a.label).toLowerCase());
+      const bi = HP_MONTH_ORDER.findIndex((name) => name.toLowerCase() === String(b.label).toLowerCase());
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    });
+    const category = [
+      { label: 'Gen', value: gen },
+      { label: 'SC-ST', value: scSt },
+      { label: 'OBC', value: obc },
+      { label: 'EBC', value: ebc },
+      ...(notCategorised ? [{ label: 'Not categorised', value: notCategorised }] : [])
+    ].filter((row) => row.value > 0);
+    return {
+      status: 'ok',
+      students,
+      schools: schools.length,
+      teachers: sum('teachers_reached'),
+      male,
+      female,
+      girls_pct: sex ? Number(((female / sex) * 100).toFixed(1)) : null,
+      by_month: months.map((row) => ({ label: row.label, value: Number(row.value) || 0 })),
+      by_gender: [
+        { label: 'Male', value: male },
+        { label: 'Female', value: female }
+      ].filter((row) => row.value > 0),
+      by_category: category,
+      not_categorised: notCategorised
+    };
+  } catch (err) {
+    console.warn('[livelihoodAnalytics] HP WOW skipped:', err.message);
     return empty;
   }
 }
