@@ -30,7 +30,7 @@ function pageTitle(pathname) {
 
 function pageSub(pathname) {
   if (pathname === '/') return 'Open a programme, then a chart for the rows behind the number.';
-  if (pathname?.startsWith('/health')) return 'Reach, disease mix, and clinic activity.';
+  if (pathname?.startsWith('/health')) return 'Healthcare Reach, Disease profile, and Service delivery';
   if (pathname?.startsWith('/livelihood/placement')) return 'Roster follow-up and field-sheet income.';
   if (pathname?.startsWith('/livelihood/enterprise')) return 'Members, market access, and financial-year profit.';
   if (pathname?.startsWith('/livelihood')) return 'Field sheet first, then the skill roster.';
