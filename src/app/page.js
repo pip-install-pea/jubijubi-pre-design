@@ -84,14 +84,6 @@ export default function Dashboard() {
             <span className="prog-arrow">Open Health →</span>
           </Link>
         )}
-        {showLive && (
-          <Link href="/livelihood/skilling" className="prog-card prog-card--livelihood">
-            <h3>Livelihood</h3>
-            <div className="prog-stat">{fmt(summary?.livelihood_roster)}</div>
-            <p>People on the skill roster. Enterprise, Didi, and farmers are separate lists below.</p>
-            <span className="prog-arrow">Open Livelihood →</span>
-          </Link>
-        )}
         {showEdu && (
           <Link href="/education" className="prog-card prog-card--education">
             <h3>Education</h3>
@@ -102,6 +94,14 @@ export default function Dashboard() {
                 : 'Programme rollup — school sheets empty for this filter'}
             </p>
             <span className="prog-arrow">Open Education →</span>
+          </Link>
+        )}
+        {showLive && (
+          <Link href="/livelihood/skilling" className="prog-card prog-card--livelihood">
+            <h3>Livelihood</h3>
+            <div className="prog-stat">{fmt(summary?.livelihood_roster)}</div>
+            <p>People on the skill roster. Enterprise, Didi, and farmers are separate lists below.</p>
+            <span className="prog-arrow">Open Livelihood →</span>
           </Link>
         )}
       </div>

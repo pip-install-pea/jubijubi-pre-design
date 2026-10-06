@@ -96,19 +96,19 @@ const Sidebar = () => {
           </>
         )}
 
+        {(isAdmin || user?.thematic === 'education') && (
+          <>
+            <div className="nav-label">Education</div>
+            {item('/education', 'Education', GraduationCap, checkActive('/education'))}
+          </>
+        )}
+
         {(isAdmin || user?.thematic === 'livelihood') && (
           <>
             <div className="nav-label">Livelihood</div>
             {item('/livelihood/skilling', 'Skilling', BookOpen, pathname?.startsWith('/livelihood/skilling'))}
             {item('/livelihood/placement', 'Placement', Briefcase, pathname?.startsWith('/livelihood/placement'))}
             {item('/livelihood/enterprise', 'Enterprise', Buildings, pathname?.startsWith('/livelihood/enterprise'))}
-          </>
-        )}
-
-        {(isAdmin || user?.thematic === 'education') && (
-          <>
-            <div className="nav-label">Education</div>
-            {item('/education', 'Education', GraduationCap, checkActive('/education'))}
           </>
         )}
 
