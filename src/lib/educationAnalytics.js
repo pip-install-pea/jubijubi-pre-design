@@ -1,6 +1,15 @@
 import { fetchall, scalar } from './db.js';
-import { bindIn, buildFilters, splitList, whereStr, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { bindIn, buildFilters, splitList, whereStr, withPeerAverages, mean } from './analytics.js';
 import { foldSql, displaySql, softFoldSql, mergeSimilarLabels } from './labelNorm.js';
+import {
+  eduGeoClauses,
+  eduPlaceSql,
+  eduStateSql,
+  excludeWowClause,
+  EDU_SCHOOL_IDS,
+  EDU_CASTE_IDS,
+  kkpNamesForStates
+} from './eduGeo.js';
 
 const GEO = { module: 'education' };
 
@@ -24,11 +33,12 @@ async function safeFetchall(query, params) {
 
 export async function getActivities(filters) {
   const { clauses, params } = buildFilters(filters, {
-    state_col: 'state_id',
-    district_col: 'district_id',
+    state_col: null,
+    district_col: null,
     academic_year_col: 'academic_year',
     ...GEO
   });
+  clauses.push(excludeWowClause('program_name'));
   const w = whereStr(clauses);
 
   const query = `
@@ -57,11 +67,12 @@ export async function getActivities(filters) {
 
 export async function getStudentsByProgram(filters) {
   const { clauses, params } = buildFilters(filters, {
-    state_col: 'state_id',
-    district_col: 'district_id',
+    state_col: null,
+    district_col: null,
     academic_year_col: 'academic_year',
     ...GEO
   });
+  clauses.push(excludeWowClause('program_name'));
   const w = whereStr(clauses);
   const rows = await fetchall(
     `SELECT
@@ -119,22 +130,16 @@ export async function getPrePostValues(filters) {
   if (yearClause) kkpClauses.push(yearClause);
   const stateIds = splitList(filters?.state_id);
   if (stateIds.length) {
-    const stateParams = {};
-    const stateClause = bindIn('state_id::text', stateIds, 'sid', stateParams);
-    const states = await safeFetchall(
-      `SELECT state_name FROM skilltracking_state WHERE ${stateClause}`,
-      stateParams
-    );
-    const stateNames = states.map((row) => row.state_name).filter(Boolean);
-    if (!stateNames.length) {
+    const names = kkpNamesForStates(filters.state_id);
+    if (!names.length) {
       return {
         status: 'no_data',
         source: 'skilltracking_kkp_pre_and_post',
-        message: 'No livelihood state name for this filter, so KKP location cannot be matched. Do not reuse health location IDs.',
+        message: 'No education location matches this state filter.',
         data: []
       };
     }
-    const locClause = bindIn('LOWER(TRIM(location_name))', stateNames.map((name) => name.toLowerCase()), 'loc', kkpParams);
+    const locClause = bindIn('LOWER(TRIM(location_name))', names, 'loc', kkpParams);
     if (locClause) kkpClauses.push(locClause);
   }
   const kw = whereStr(kkpClauses);
@@ -195,10 +200,11 @@ export async function getPrePostValues(filters) {
 export async function getSchoolsComparison(filters) {
   const { clauses, params } = buildFilters(filters, {
     academic_year_col: 'academic_year',
-    state_col: 'state_id',
-    district_col: 'district_id',
+    state_col: null,
+    district_col: null,
     ...GEO
   });
+  clauses.push(excludeWowClause('program_name'));
   const w = whereStr(clauses);
 
   const query = `
@@ -264,10 +270,11 @@ export async function getMuskaanPerformance(filters) {
 export async function getEducationReach(filters) {
   const { clauses, params } = buildFilters(filters, {
     academic_year_col: 'academic_year',
-    state_col: 'state_id',
-    district_col: 'district_id',
+    state_col: null,
+    district_col: null,
     ...GEO
   });
+  clauses.push(excludeWowClause('program_name'));
   const w = whereStr(clauses);
 
   const query = `
@@ -323,6 +330,7 @@ function mixprogramYearFilter(filters) {
   const clauses = [MIX_CANONICAL_ROW];
   const yearClause = bindIn('m.year', year, 'year', params);
   if (yearClause) clauses.push(yearClause);
+  clauses.push(...eduGeoClauses(filters, params));
   return { w: whereStr(clauses), params };
 }
 
@@ -361,8 +369,9 @@ function andPid(w, ids) {
 
 export async function getMixprogramSchools(filters) {
   const { w, params } = mixprogramYearFilter(filters);
-  const schoolIds = ['3', '4', '8', '9', '10'];
+  const schoolIds = EDU_SCHOOL_IDS;
   const schoolWhere = andPid(w, schoolIds);
+  const placeSql = eduPlaceSql();
 
   const byProgram = await safeFetchall(
     `SELECT COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS label,
@@ -387,7 +396,7 @@ export async function getMixprogramSchools(filters) {
             COALESCE(SUM(students_female), 0)::integer AS female,
             COALESCE(SUM(teachers_reached), 0)::integer AS teachers
      FROM (
-       SELECT ${foldSql('m.location')} AS loc_key,
+       SELECT ${placeSql} AS loc_key,
               ${foldSql('m.school_name')} AS school_key,
               MAX(m.students_total) AS students_total,
               MAX(m.students_male) AS students_male,
@@ -406,21 +415,19 @@ export async function getMixprogramSchools(filters) {
   const sexDenom = male + female;
 
   const byLocation = await safeFetchall(
-    `SELECT COALESCE(${displaySql('location')}, 'Unknown') AS label,
+    `SELECT loc_key AS label,
             COALESCE(SUM(students_total), 0)::integer AS value
      FROM (
-       SELECT ${foldSql('m.location')} AS loc_key,
-              ${displaySql('m.location')} AS location,
+       SELECT ${placeSql} AS loc_key,
               ${foldSql('m.school_name')} AS school_key,
               MAX(m.students_total) AS students_total
        FROM education_mixprogram m
        ${schoolWhere}
          AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
-       GROUP BY ${foldSql('m.location')}, ${foldSql('m.school_name')}
+       GROUP BY 1, 2
      ) school_max
      GROUP BY loc_key
-     ORDER BY value DESC
-     LIMIT 12`,
+     ORDER BY value DESC`,
     params
   );
 
@@ -431,7 +438,7 @@ export async function getMixprogramSchools(filters) {
             COALESCE(SUM(category_ebc), 0)::integer AS ebc,
             COALESCE(SUM(category_minorities), 0)::integer AS minorities
      FROM (
-       SELECT ${foldSql('m.location')},
+       SELECT ${placeSql},
               ${foldSql('m.school_name')},
               MAX(m.category_gen) AS category_gen,
               MAX(m.category_sc_st) AS category_sc_st,
@@ -439,7 +446,7 @@ export async function getMixprogramSchools(filters) {
               MAX(m.category_ebc) AS category_ebc,
               MAX(m.category_minorities) AS category_minorities
        FROM education_mixprogram m
-       ${andPid(w, ['3', '4', '9', '10'])}
+       ${andPid(w, EDU_CASTE_IDS)}
          AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
        GROUP BY 1, 2
      ) caste_schools`,
@@ -517,14 +524,14 @@ export async function getMixprogramSchools(filters) {
   );
 
   const locProg = await safeFetchall(
-    `SELECT COALESCE(${displaySql('m.location')}, 'Unknown') AS location,
+    `SELECT ${placeSql} AS location,
             COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS program,
             COALESCE(SUM(m.students_total), 0)::integer AS students
      FROM education_mixprogram m
      LEFT JOIN skilltracking_program p ON p.program_id::text = m.program_id::text
      ${schoolWhere}
        AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
-     GROUP BY ${foldSql('m.location')}, COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text)
+     GROUP BY 1, 2
      ORDER BY students DESC`,
     params
   );
@@ -615,62 +622,37 @@ export async function getEducationQuality() {
 export async function getEducationGeoBenchmarks(filters) {
   const grain = filters?.state_id ? 'district' : 'state';
   const empty = { grain, unit: 'students', rows: [], state_average: 0, programme_average: 0, programme_n: 0, state_n: 0 };
-  const peerFilters = grain === 'district' ? stripDistrict(filters) : stripGeo(filters);
-  const programmeFilters = stripGeo(filters);
-  const opts = {
-    academic_year_col: 'ep.academic_year',
-    state_col: 'ep.state_id',
-    district_col: 'ep.district_id',
-    ...GEO
-  };
-  const joinSelect = grain === 'district'
-    ? `COALESCE(
-         (SELECT NULLIF(TRIM(d.district_name), '') FROM skilltracking_district d
-          WHERE d.district_id::text = ep.district_id::text
-            AND d.state_id::text = ep.state_id::text
-          ORDER BY d.district_name LIMIT 1),
-         ep.district_id::text, 'Unknown') AS label,
-       ep.district_id::text AS id`
-    : `COALESCE(
-         (SELECT NULLIF(TRIM(s.state_name), '') FROM skilltracking_state s
-          WHERE s.state_id::text = ep.state_id::text
-          ORDER BY s.state_name LIMIT 1),
-         ep.state_id::text, 'Unknown') AS label,
-       ep.state_id::text AS id`;
-  const joinSql = '';
-  const groupSql = grain === 'district'
-    ? `GROUP BY ep.state_id, ep.district_id`
-    : `GROUP BY ep.state_id`;
-
-  const run = async (f, limit) => {
-    const { clauses, params } = buildFilters(f, opts);
-    const lim = limit ? `LIMIT ${Number(limit)}` : '';
-    return safeFetchall(
-      `SELECT ${joinSelect},
-              COALESCE(SUM(CASE WHEN ep.student_count::text ~ '^[0-9]+$' THEN ep.student_count::integer ELSE 0 END), 0)::integer AS value
-       FROM education_program ep
-       ${joinSql}
-       ${whereStr(clauses)}
-       ${groupSql}
-       ORDER BY value DESC
-       ${lim}`,
-      params
-    );
-  };
+  const scoped = grain === 'district'
+    ? { ...filters, district_id: null }
+    : { ...filters, state_id: null, district_id: null };
+  const labelSql = grain === 'district' ? eduPlaceSql() : eduStateSql();
 
   try {
-    const [peerRows, programmeRows] = await Promise.all([run(peerFilters), run(programmeFilters)]);
-    const stateAverage = grain === 'district' ? mean(peerRows.map((r) => r.value)) : 0;
-    const programmeAverage = mean(programmeRows.map((r) => r.value));
-    const display = (grain === 'district' ? peerRows : programmeRows).slice(0, 12);
+    const { w, params } = mixprogramYearFilter(scoped);
+    const rows = await safeFetchall(
+      `SELECT label, label AS id, COALESCE(SUM(students_total), 0)::integer AS value
+       FROM (
+         SELECT ${labelSql} AS label,
+                ${foldSql('m.school_name')} AS school_key,
+                MAX(m.students_total) AS students_total
+         FROM education_mixprogram m
+         ${andPid(w, EDU_SCHOOL_IDS)}
+           AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+         GROUP BY 1, 2
+       ) schools
+       GROUP BY label
+       ORDER BY value DESC`,
+      params
+    );
+    const programmeAverage = mean(rows.map((row) => row.value));
     return {
       grain,
       unit: 'students',
-      rows: withPeerAverages(display, stateAverage, programmeAverage),
-      state_average: Number(stateAverage.toFixed(1)),
+      rows: withPeerAverages(rows, 0, programmeAverage),
+      state_average: 0,
       programme_average: Number(programmeAverage.toFixed(1)),
-      programme_n: programmeRows.length,
-      state_n: grain === 'district' ? peerRows.length : 0
+      programme_n: rows.length,
+      state_n: 0
     };
   } catch (err) {
     console.warn('[educationAnalytics] geo benchmarks skipped:', err.message);
@@ -681,10 +663,11 @@ export async function getEducationGeoBenchmarks(filters) {
 export async function getSchoolQuadrant(filters) {
   const { clauses: pClauses, params: pParams } = buildFilters(filters, {
     academic_year_col: 'academic_year',
-    state_col: 'state_id',
-    district_col: 'district_id',
+    state_col: null,
+    district_col: null,
     ...GEO
   });
+  pClauses.push(excludeWowClause('program_name'));
   const { clauses: aClauses, params: aParams } = buildFilters(filters, {
     academic_year_col: 'academic_year',
     school_col: 'school_id',

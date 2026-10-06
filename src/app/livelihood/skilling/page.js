@@ -165,10 +165,16 @@ export default function SkillingPage() {
         axios.get(`/api/livelihood/skilling/benchmarks?${query}`)
       ]);
       let mixSkilling = { data: { status: 'no_data' } };
+      let hpWow = { data: { status: 'no_data' } };
       try {
         mixSkilling = await axios.get(`/api/livelihood/mixprogram/skilling?${query}`);
       } catch {
         mixSkilling = { data: { status: 'no_data' } };
+      }
+      try {
+        hpWow = await axios.get(`/api/livelihood/mixprogram/hpwow?${query}`);
+      } catch {
+        hpWow = { data: { status: 'no_data' } };
       }
       setData({
         beneficiaries: beneficiaries.data,
@@ -177,7 +183,8 @@ export default function SkillingPage() {
         byTrade: byTrade.data,
         sessionsByTrade: sessions.data,
         benchmarks: benchmarks.data,
-        mixSkilling: mixSkilling.data
+        mixSkilling: mixSkilling.data,
+        hpWow: hpWow.data
       });
     } catch (err) {
       console.error('Skilling data load failed', err);
@@ -622,6 +629,75 @@ export default function SkillingPage() {
                 />
               </div>
             </div>
+          )}
+
+          {data.hpWow?.status === 'ok' && (
+            <>
+              <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '28px 0 12px' }}>School-based skilling: HP WOW</h2>
+              <p className="chart-caption">HP WOW · Nanjangud, Karnataka · school sheet (no placement data)</p>
+              <div className="kpi-grid">
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('hpwow_school')}>
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.students)}</div>
+                    <div className="kpi-label">Students</div>
+                  </div>
+                </div>
+                <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('hpwow_school')}>
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.schools)}</div>
+                    <div className="kpi-label">Schools</div>
+                  </div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-body">
+                    <div className="kpi-value">{data.hpWow.girls_pct == null ? '—' : `${data.hpWow.girls_pct}%`}</div>
+                    <div className="kpi-label">Girls share</div>
+                    <p className="kpi-caption">Female {formatCount(data.hpWow.female)} · Male {formatCount(data.hpWow.male)}</p>
+                  </div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-body">
+                    <div className="kpi-value">{formatCount(data.hpWow.teachers)}</div>
+                    <div className="kpi-label">Teachers covered</div>
+                  </div>
+                </div>
+              </div>
+              <div className="card-row">
+                <div className="card">
+                  <div className="card-header"><h3>Students by month</h3></div>
+                  <div className="card-body">
+                    <ColumnBar
+                      labels={(data.hpWow.by_month || []).map((row) => row.label)}
+                      values={(data.hpWow.by_month || []).map((row) => row.value)}
+                      axisTitle="Students"
+                    />
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="card-header"><h3>Gender</h3></div>
+                  <div className="card-body">
+                    <BrandDoughnut
+                      labels={(data.hpWow.by_gender || []).map((row) => row.label)}
+                      values={(data.hpWow.by_gender || []).map((row) => row.value)}
+                      percent
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-header"><h3>Category</h3></div>
+                <div className="card-body">
+                  <BrandDoughnut
+                    labels={(data.hpWow.by_category || []).map((row) => row.label)}
+                    values={(data.hpWow.by_category || []).map((row) => row.value)}
+                    percent
+                  />
+                  {data.hpWow.not_categorised > 0 && (
+                    <p className="chart-caption">Not categorised: {formatCount(data.hpWow.not_categorised)} students, after deduping category counts per school.</p>
+                  )}
+                </div>
+              </div>
+            </>
           )}
         </>
       )}
