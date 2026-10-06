@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { fetchall, scalar, isDatabaseConfigured } from '@/lib/db.js';
 import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
-import { getReach, getDepth, healthFilters } from '@/lib/healthAnalytics.js';
+import { getReach, getDepth, healthFilters, listHealthVillages, listHealthDoctors } from '@/lib/healthAnalytics.js';
 import { buildJob } from '@/lib/phpRegistry.js';
 import { postPhpEnvelope, sanitiseRow } from '@/lib/phpClient.js';
 import { addColFilters, filterRows, parseColFilters } from '@/lib/drilldownFilters.js';
@@ -69,6 +69,38 @@ export async function GET(req) {
     const per_page = Math.min(200, Math.max(1, parseInt(url.searchParams.get('per_page') || '50', 10)));
     const offset = (page - 1) * per_page;
     const filters = healthFilters(getFiltersFromRequest(req));
+
+    if (drill_type === 'villages') {
+      const rows = await listHealthVillages(filters);
+      const total = rows.reduce((sum, row) => sum + (Number(row.patients) || 0), 0);
+      return NextResponse.json({
+        columns: [
+          { key: 'village', label: 'Village' },
+          { key: 'patients', label: 'Patients' }
+        ],
+        rows,
+        total,
+        page: 1,
+        per_page: Math.max(rows.length, 1),
+        caption: 'Patient counts under the selected year and geography. The Villages reached tile is the envelope count and does not follow state, district, or month.'
+      });
+    }
+
+    if (drill_type === 'doctors') {
+      const list = await listHealthDoctors(filters);
+      return NextResponse.json({
+        columns: [
+          { key: 'partner', label: 'Partner' },
+          { key: 'specialization', label: 'Specialization' },
+          { key: 'doctors', label: 'Doctors' }
+        ],
+        rows: list.rows,
+        total: list.doctors,
+        page: 1,
+        per_page: Math.max(list.rows.length, 1),
+        caption: 'Unique active doctors. Deleted profiles are excluded. Names are not listed.'
+      });
+    }
 
     if (drill_type === 'patients') {
       const reach = await getReach(filters);

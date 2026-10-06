@@ -16,6 +16,7 @@ import FilterTags from '../../components/FilterTag';
 import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { NAVY, SKY } from '../../lib/chartTheme';
 import { formatCount, formatINR } from '../../lib/format';
+import { Users, MapPin, Baby, CalendarCheck, CurrencyInr, Stethoscope, House, Wheelchair } from '@phosphor-icons/react';
 
 function settledData(result) {
   return result.status === 'fulfilled' ? result.value.data : null;
@@ -95,6 +96,15 @@ export default function HealthPage() {
 
   const yearLabel = data.depth?.effective_year || data.reach?.envelope_year || data.depth?.disease_mix_year || filters.year || '—';
   const envelopeNote = (filters.state_id || filters.district_id || filters.month) ? 'All states · calendar year' : '';
+  const direct = Number(data.reach?.direct_beneficiaries) || 0;
+  const indirect = direct * 5;
+  const villageItems = [
+    ...(data.reach?.top_villages || []),
+    ...((Number(data.reach?.other_villages) || 0) > 0
+      ? [{ label: `Other villages (${data.reach.other_villages})`, value: data.reach.other_village_patients }]
+      : [])
+  ];
+  const doctorNote = data.reach?.doctors_follow_geo ? 'Current roster' : 'Current roster · All states';
   const yearChoices = [...new Set([
     ...(data.reach?.beneficiary_yoy || []).map((r) => String(r.year)).filter(Boolean),
     yearLabel !== '—' ? String(yearLabel) : '',
@@ -128,14 +138,27 @@ export default function HealthPage() {
       <div className="kpi-grid">
         <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('patients', 'Direct Beneficiaries')}>
           <div className="kpi-body">
+            <Users size={22} weight="duotone" />
             <div className="kpi-value">{formatCount(data.reach?.direct_beneficiaries)}</div>
             <div className="kpi-label">Direct beneficiaries</div>
+            <p className="kpi-caption">Patients reached in this calendar year.</p>
             <p className="kpi-caption">Calendar year {yearLabel}</p>
             <FilterTags note={envelopeNote} />
           </div>
         </div>
-        <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('envelope', yearLabel)}>
+        <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('patients', 'Indirect beneficiaries')}>
           <div className="kpi-body">
+            <Users size={22} weight="duotone" />
+            <div className="kpi-value">{formatCount(indirect)}</div>
+            <div className="kpi-label">Indirect beneficiaries (estimate)</div>
+            <p className="kpi-caption">Direct × 5</p>
+            <p className="kpi-caption">Calendar year {yearLabel}</p>
+            <FilterTags note={envelopeNote} />
+          </div>
+        </div>
+        <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('villages', yearLabel)}>
+          <div className="kpi-body">
+            <House size={22} weight="duotone" />
             <div className="kpi-value">{formatCount(data.reach?.villages_reached)}</div>
             <div className="kpi-label">Villages reached</div>
             <p className="kpi-caption">Calendar year {yearLabel}</p>
@@ -144,33 +167,115 @@ export default function HealthPage() {
         </div>
         <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('age', 'Adolescents (10–19)')}>
           <div className="kpi-body">
+            <Baby size={22} weight="duotone" />
             <div className="kpi-value">{formatCount(data.reach?.adolescents_10_19)}</div>
             <div className="kpi-label">Adolescents (10–19)</div>
             <p className="kpi-caption">Calendar year {yearLabel}</p>
             <FilterTags note={envelopeNote} />
           </div>
         </div>
+        <div className="kpi-card">
+          <div className="kpi-body">
+            <MapPin size={22} weight="duotone" />
+            <div className="kpi-value">{formatCount(data.reach?.states_reached)}</div>
+            <div className="kpi-label">States</div>
+            <p className="kpi-caption">States in the health envelope for this calendar year.</p>
+            <p className="kpi-caption">Calendar year {yearLabel}</p>
+            <FilterTags note={envelopeNote} />
+          </div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-body">
+            <MapPin size={22} weight="duotone" />
+            <div className="kpi-value">{formatCount(data.reach?.districts)}</div>
+            <div className="kpi-label">Districts</div>
+            <p className="kpi-caption">Distinct districts on patient profiles for this year.</p>
+            <p className="kpi-caption">Calendar year {yearLabel}</p>
+          </div>
+        </div>
         {data.depth?.appointments_available && (
-          <>
-            <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('appointments', yearLabel)}>
+          <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('appointments', yearLabel)}>
+            <div className="kpi-body">
+              <CalendarCheck size={22} weight="duotone" />
+              <div className="kpi-value">{formatCount(data.depth?.total_appointments)}</div>
+              <div className="kpi-label">Appointments (visits)</div>
+              <p className="kpi-caption">Each visit counts once; one patient can visit many times.</p>
+              <p className="kpi-caption">Calendar year {yearLabel}</p>
+            </div>
+          </div>
+        )}
+        <div className="kpi-card">
+          <div className="kpi-body">
+            <Baby size={22} weight="duotone" />
+            <div className="kpi-value">{formatCount(data.reach?.pregnant_women)}</div>
+            <div className="kpi-label">Pregnant women</div>
+            <p className="kpi-caption">Profiles with female_is_pregnant = Y.</p>
+            <p className="kpi-caption">Calendar year {yearLabel}</p>
+          </div>
+        </div>
+        <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('doctors', 'Doctors')}>
+          <div className="kpi-body">
+            <Stethoscope size={22} weight="duotone" />
+            <div className="kpi-value">{formatCount(data.reach?.doctors)}</div>
+            <div className="kpi-label">Doctors</div>
+            <p className="kpi-caption">Unique active doctors on Jubicare (all partners); deleted profiles excluded.</p>
+            <FilterTags note={doctorNote} />
+          </div>
+        </div>
+        {data.depth?.appointments_available && (
+          <div className="kpi-card">
+            <div className="kpi-body">
+              <CurrencyInr size={22} weight="duotone" />
+              <div className="kpi-value">{formatINR(data.depth?.fees_collected)}</div>
+              <div className="kpi-label">Fee Revenue Generated</div>
+              <p className="kpi-caption">Sum of fees paid at appointments</p>
+              <p className="kpi-caption">Calendar year {yearLabel}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+        <div className="card-header">
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Health impact</h3>
+          <p className="kpi-caption">Calendar year {yearLabel}</p>
+        </div>
+        <div className="card-body">
+          <div className="kpi-grid">
+            <div className="kpi-card">
               <div className="kpi-body">
-                <div className="kpi-value">{formatCount(data.depth?.total_appointments)}</div>
-                <div className="kpi-label">Appointments (visits)</div>
-                <p className="kpi-caption">Each visit counts once; one patient can visit many times.</p>
-                <p className="kpi-caption">Calendar year {yearLabel}</p>
+                <Users size={22} weight="duotone" />
+                <div className="kpi-value">{formatCount(direct)}</div>
+                <div className="kpi-label">Patients reached</div>
               </div>
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
-                <div className="kpi-value">{formatINR(data.depth?.fees_collected)}</div>
-                <div className="kpi-label">Fee Revenue Generated</div>
-                <p className="kpi-caption">Sum of fees paid at appointments</p>
-                <p className="kpi-caption">Calendar year {yearLabel}</p>
+                <Users size={22} weight="duotone" />
+                <div className="kpi-value">{formatCount(indirect)}</div>
+                <div className="kpi-label">Indirect beneficiaries (estimate)</div>
+                <p className="kpi-caption">Direct × 5</p>
               </div>
             </div>
-          </>
-        )}
+          </div>
+        </div>
       </div>
+
+      {villageItems.length > 0 && (
+        <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+          <div className="card-header">
+            <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Top villages by patients</h3>
+            <p className="kpi-caption">Calendar year {yearLabel}. Names from the village master. The list total is patients under the year and geography filters.</p>
+          </div>
+          <div className="card-body">
+            <RankingBar
+              items={villageItems}
+              maxItems={16}
+              onBarClick={() => handleDrilldown('villages', yearLabel)}
+            />
+          </div>
+        </div>
+      )}
 
       {data.reach?.beneficiary_yoy?.some((r) => Number(r.total_beneficiary) > 0) && (
         <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
@@ -322,15 +427,15 @@ export default function HealthPage() {
             </div>
             <div className="card-body">
               <div className="stat-row" style={{ cursor: 'pointer' }} onClick={() => handleDrilldown('inclusion', 'seniors')}>
-                <span className="stat-label">Senior citizens (60+)</span>
+                <span className="stat-label"><Users size={18} weight="duotone" /> Senior citizens (60+)</span>
                 <span className="stat-value">{formatCount(data.inclusion?.senior_citizens)}</span>
               </div>
               <div className="stat-row" style={{ cursor: 'pointer' }} onClick={() => handleDrilldown('inclusion', 'disability')}>
-                <span className="stat-label">Persons with disability</span>
+                <span className="stat-label"><Wheelchair size={18} weight="duotone" /> Persons with disability</span>
                 <span className="stat-value">{formatCount(data.inclusion?.people_with_disability)}</span>
               </div>
               <div className="stat-row" style={{ cursor: 'pointer' }} onClick={() => handleDrilldown('inclusion', 'women')}>
-                <span className="stat-label">Women</span>
+                <span className="stat-label"><Users size={18} weight="duotone" /> Women</span>
                 <span className="stat-value">{formatCount(data.inclusion?.women_count)}</span>
               </div>
             </div>
