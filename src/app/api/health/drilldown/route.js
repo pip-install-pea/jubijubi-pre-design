@@ -70,6 +70,26 @@ export async function GET(req) {
     const offset = (page - 1) * per_page;
     const filters = healthFilters(getFiltersFromRequest(req));
 
+    if (drill_type === 'disease_other') {
+      const depth = await getDepth(filters);
+      const rest = (depth.disease_mix || []).slice(15).map((row) => ({
+        disease: row.disease,
+        patients: row.patients
+      }));
+      const total = rest.reduce((sum, row) => sum + (Number(row.patients) || 0), 0);
+      return NextResponse.json({
+        columns: [
+          { key: 'disease', label: 'Disease' },
+          { key: 'patients', label: 'Patients' }
+        ],
+        rows: rest,
+        total,
+        page: 1,
+        per_page: Math.max(rest.length, 1),
+        caption: 'Diseases after the top 15. The yearly disease summary does not follow the month filter.'
+      });
+    }
+
     if (drill_type === 'villages') {
       const rows = await listHealthVillages(filters);
       const total = rows.reduce((sum, row) => sum + (Number(row.patients) || 0), 0);
@@ -161,7 +181,7 @@ export async function GET(req) {
           return NextResponse.json({
             columns: [
               { key: isDisease ? 'disease' : 'symptom', label: isDisease ? 'Disease' : 'Symptom' },
-              { key: 'patients', label: 'Patients' },
+              { key: 'patients', label: isDisease ? 'Patients' : 'Mentions' },
               { key: 'year', label: 'Year' }
             ],
             rows: [{
@@ -232,7 +252,8 @@ export async function GET(req) {
         date_col: 'a.created_at',
         partner_col: 'a.partner_id',
         state_col: 'a.state_id',
-        district_col: 'a.district_id'
+        district_col: 'a.district_id',
+        calendar_month: true
       });
       if (q) {
         clauses.push("(p.full_name ILIKE :q OR a.appointment_id::text LIKE :q)");
@@ -282,7 +303,8 @@ export async function GET(req) {
         gender_col: 'gender',
         state_col: 'state_id',
         district_col: 'district_id',
-        module: 'health'
+        module: 'health',
+        calendar_month: true
       });
       if (value === 'seniors') {
         clauses.push("CASE WHEN age ~ '^[0-9]+$' THEN age::integer ELSE 0 END >= 60");
@@ -329,10 +351,20 @@ export async function GET(req) {
         state_col: 'health_profile_patients.state_id',
         district_col: 'health_profile_patients.district_id',
         gender_col: 'health_profile_patients.gender',
-        module: 'health'
+        module: 'health',
+        calendar_month: true
       });
-      if (value === 'Unknown') {
-        clauses.push("(caste_id IS NULL OR caste_id = '')");
+      const code = /^Code (\d+) \(unmapped\)$/.exec(value);
+      if (!value || value === 'Unknown' || value === 'Not recorded') {
+        clauses.push("(caste_id IS NULL OR btrim(COALESCE(caste_id::text, '')) = '' OR lower(btrim(caste_id::text)) = 'unknown')");
+      } else if (code) {
+        clauses.push('btrim(caste_id::text) = :drill_value');
+        params.drill_value = code[1];
+      } else if (value === 'General') {
+        clauses.push("lower(regexp_replace(btrim(COALESCE(caste_id::text, '')), '[^a-zA-Z0-9]', '', 'g')) IN ('general', 'gen')");
+      } else if (value === 'SC' || value === 'ST' || value === 'OBC') {
+        clauses.push("lower(regexp_replace(btrim(COALESCE(caste_id::text, '')), '[^a-zA-Z0-9]', '', 'g')) = :drill_fold");
+        params.drill_fold = value.toLowerCase();
       } else if (value) {
         clauses.push('caste_id = :drill_value');
         params.drill_value = value;
@@ -404,7 +436,8 @@ export async function GET(req) {
         district_col: 'health_profile_patients.district_id',
         gender_col: 'health_profile_patients.gender',
         partner_col: 'partner_id',
-        module: 'health'
+        module: 'health',
+        calendar_month: true
       });
       if (q) {
         clauses.push('(full_name ILIKE :q OR patient_id::text LIKE :q)');
