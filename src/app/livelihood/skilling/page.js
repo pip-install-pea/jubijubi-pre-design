@@ -542,6 +542,7 @@ export default function SkillingPage() {
               <div className="kpi-body">
                 <div className="kpi-value">{formatINR(data.mixSkilling?.avg_post)}</div>
                 <div className="kpi-label">Post Income</div>
+                <p className="kpi-caption">(Enhancement in income status post completion of course)</p>
                 <p className="kpi-caption">Average of candidates with a recorded income (n = {formatCount(data.mixSkilling?.with_post)}). M&E field sheet. Zero and blank values are left out.</p>
               </div>
             </div>
