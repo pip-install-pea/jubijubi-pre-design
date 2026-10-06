@@ -18,6 +18,8 @@ import PageRail from '../../components/PageRail';
 import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { financialYearList } from '../../lib/phpRegistry.js';
 import { NAVY, SKY } from '../../lib/chartTheme';
+import IndiaMap from '../../components/charts/IndiaMap';
+import { pinsFor } from '../../lib/geo/locations';
 
 export default function EducationPage() {
   const [data, setData] = useState({
@@ -142,6 +144,19 @@ export default function EducationPage() {
           hint="Shift-click a second programme to compare"
         />
       </PageRail>
+      <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+        <div className="card-header">
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Our School Network</h3>
+        </div>
+        <div className="card-body">
+          <IndiaMap
+            pins={pinsFor('education')}
+            highlightStates={['Rajasthan', 'Gujarat', 'Uttar Pradesh', 'Karnataka']}
+            enableDrilldown
+            caption="School and student counts by location are not on this view. Pins show place names only."
+          />
+        </div>
+      </div>
       <div className="kpi-grid">
         {useSchoolSheets ? (
           <>

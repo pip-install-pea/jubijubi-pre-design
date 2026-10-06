@@ -14,6 +14,7 @@ import ChartFocusBar from '../../components/ChartFocusBar';
 import PageRail from '../../components/PageRail';
 import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { NAVY, SKY } from '../../lib/chartTheme';
+import IndiaMap from '../../components/charts/IndiaMap';
 
 function settledData(result) {
   return result.status === 'fulfilled' ? result.value.data : null;
@@ -24,7 +25,8 @@ export default function HealthPage() {
     reach: null,
     depth: null,
     inclusion: null,
-    benchmarks: null
+    benchmarks: null,
+    map: null
   });
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
@@ -45,17 +47,19 @@ export default function HealthPage() {
       Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
     ).toString();
     try {
-      const [reach, depth, inclusion, benchmarks] = await Promise.allSettled([
+      const [reach, depth, inclusion, benchmarks, map] = await Promise.allSettled([
         axios.get(`/api/health/reach?${query}`),
         axios.get(`/api/health/depth?${query}`),
         axios.get(`/api/health/inclusion?${query}`),
-        axios.get(`/api/health/benchmarks?${query}`)
+        axios.get(`/api/health/benchmarks?${query}`),
+        axios.get(`/api/health/map?${query}`)
       ]);
       setData({
         reach: settledData(reach),
         depth: settledData(depth),
         inclusion: settledData(inclusion),
-        benchmarks: settledData(benchmarks)
+        benchmarks: settledData(benchmarks),
+        map: settledData(map)
       });
       const failed = [reach, depth, inclusion].filter((r) => r.status === 'rejected');
       if (failed.length === 3) {
@@ -95,6 +99,8 @@ export default function HealthPage() {
   );
 
   const yearLabel = data.reach?.envelope_year || data.depth?.disease_mix_year || filters.year || '—';
+  const selectedStateId = String(filters.state_id || '').split(',').filter(Boolean)[0] || '';
+  const drillStateName = selectedStateId ? (data.map?.stateById?.[selectedStateId] || null) : null;
   const yearChoices = [...new Set([
     ...(data.reach?.beneficiary_yoy || []).map((r) => String(r.year)).filter(Boolean),
     yearLabel !== '—' ? String(yearLabel) : '',
@@ -186,6 +192,30 @@ export default function HealthPage() {
           </div>
         </div>
       )}
+
+      <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+        <div className="card-header">
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Patients by state</h3>
+        </div>
+        <div className="card-body">
+          <IndiaMap
+            stateMetrics={data.map?.stateMetrics}
+            districtMetrics={data.map?.districtMetrics}
+            metricLabel="Patients"
+            districtBubbles
+            enableDrilldown
+            drillStateName={drillStateName}
+            unmapped={data.map?.unmapped || []}
+            onRegionSelect={({ level, stateId, districtId }) => {
+              if (!stateId) return;
+              if (level === 'district') patchFilters({ state_id: stateId, district_id: districtId || '' });
+              else patchFilters({ state_id: stateId, district_id: '' });
+            }}
+            onBack={() => patchFilters({ state_id: '', district_id: '' })}
+            caption="Patients by state and district for the selected year and gender. Choosing a state opens its districts. A region with no patients shows No data."
+          />
+        </div>
+      </div>
 
       <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
         <div className="card-header">

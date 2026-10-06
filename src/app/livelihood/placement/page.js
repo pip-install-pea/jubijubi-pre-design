@@ -8,6 +8,9 @@ import ColumnBar from '../../../components/charts/ColumnBar';
 import FunnelBars from '../../../components/charts/FunnelBars';
 import EChart, { comboLineBarOption, groupedBarOption } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
+import IndiaMap, { applyLivelihoodPinClick } from '../../../components/charts/IndiaMap';
+import { pinsFor } from '../../../lib/geo/locations';
+import { patchFilters } from '../../../hooks/useChartFocus';
 import { formatCount, formatINR, formatPercent } from '../../../lib/format';
 
 const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
@@ -30,6 +33,7 @@ export default function PlacementPage() {
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
+  const [activePinId, setActivePinId] = useState(null);
 
   useEffect(() => {
     const handleApply = (e) => setFilters(e.detail || {});
@@ -92,6 +96,24 @@ export default function PlacementPage() {
 
       {data && (
         <>
+          <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+            <div className="card-header">
+              <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Where we work</h3>
+            </div>
+            <div className="card-body">
+              <IndiaMap
+                pins={pinsFor('livelihood')}
+                activePinId={activePinId}
+                onPinClick={async (pin) => {
+                  const next = await applyLivelihoodPinClick({ pin, activePinId, patch: patchFilters });
+                  setActivePinId(next.activePinId);
+                }}
+                highlightStates={['Rajasthan', 'Gujarat', 'Uttar Pradesh', 'Karnataka']}
+                enableDrilldown
+                caption="Programme states are highlighted. This page has no state breakdown, so counts are not shaded."
+              />
+            </div>
+          </div>
           {data.indicators?.status === 'ok' && (
             <div className="kpi-grid">
               <Indicator

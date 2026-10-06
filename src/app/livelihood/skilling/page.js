@@ -32,7 +32,10 @@ const SHEET_GENDER_COLORS = {
 import DrilldownModal from '../../../components/DrilldownModal';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
-import { useChartFocus } from '../../../hooks/useChartFocus';
+import { useChartFocus, patchFilters } from '../../../hooks/useChartFocus';
+import IndiaMap, { applyLivelihoodPinClick } from '../../../components/charts/IndiaMap';
+import { pinsFor } from '../../../lib/geo/locations';
+import { stateMetricsFromLabels } from '../../../lib/geo/regionNames';
 import { formatCount, formatINR, formatINRFull } from '../../../lib/format';
 import { groupBelowShare } from '../../../lib/chartTheme';
 
@@ -141,6 +144,7 @@ export default function SkillingPage() {
   const [filters, setFilters] = useState({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
+  const [activePinId, setActivePinId] = useState(null);
   const { focus, select, remove, clear } = useChartFocus();
 
   useEffect(() => {
@@ -252,6 +256,9 @@ export default function SkillingPage() {
   const womenRow = data?.demographics?.gender_breakdown?.find(g => g.gender === 'Female' || g.gender === 'F');
   const womenCount = Number(womenRow?.count) || 0;
   const womenPct = roster > 0 ? ((womenCount / roster) * 100).toFixed(1) : null;
+  const rosterGeo = data?.benchmarks?.grain === 'state'
+    ? stateMetricsFromLabels(data.benchmarks.rows, 'People')
+    : { stateMetrics: undefined, unmapped: [] };
 
   return (
     <div>
@@ -265,6 +272,29 @@ export default function SkillingPage() {
       </PageRail>
       {data && (
         <>
+          <div className="card" style={{ width: '100%', marginBottom: '24px' }}>
+            <div className="card-header">
+              <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Where we work</h3>
+            </div>
+            <div className="card-body">
+              <IndiaMap
+                pins={pinsFor('livelihood')}
+                activePinId={activePinId}
+                onPinClick={async (pin) => {
+                  const next = await applyLivelihoodPinClick({ pin, activePinId, patch: patchFilters });
+                  setActivePinId(next.activePinId);
+                }}
+                stateMetrics={rosterGeo.stateMetrics}
+                metricLabel="People"
+                highlightStates={['Rajasthan', 'Gujarat', 'Uttar Pradesh', 'Karnataka']}
+                unmapped={rosterGeo.unmapped}
+                enableDrilldown
+                caption={rosterGeo.stateMetrics
+                  ? 'People on the skill roster under the current filters. A state with no roster rows shows No data.'
+                  : 'Programme states are highlighted. Clear the state filter to shade roster counts.'}
+              />
+            </div>
+          </div>
           <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '8px 0 12px' }}>Training & Course Portfolio</h2>
           <p className="chart-caption">Course and location counts come from the M&E field sheet. Roster, batches, and trades come from the skill-tracking app. The two sources are not merged.</p>
           <div className="kpi-grid">
