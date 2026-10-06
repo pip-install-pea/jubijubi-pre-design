@@ -84,7 +84,7 @@ export function placementStatusSql(col = 'm.placement_status') {
   const raw = `btrim(COALESCE(${col}::text, ''))`;
   return `CASE
     WHEN ${raw} = '' THEN 'Not reported'
-    WHEN ${raw} ~* 'further[[:space:]]*stud' THEN 'Further study'
+    WHEN ${raw} ~* 'fur?ther[[:space:]]*stud' THEN 'Further study'
     WHEN ${raw} ~* 'on[[:space:]]*going|ongoing' THEN 'Ongoing course'
     WHEN ${raw} ~* 'self[[:space:]]*employ' THEN 'Self employment'
     WHEN ${raw} ~* 'job[[:space:]]*search' THEN 'Job searching'
