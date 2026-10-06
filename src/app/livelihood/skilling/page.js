@@ -30,6 +30,7 @@ const SHEET_GENDER_COLORS = {
   Others: '#0f766e'
 };
 import DrilldownModal from '../../../components/DrilldownModal';
+import FilterTags from '../../../components/FilterTag';
 import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
@@ -278,6 +279,7 @@ export default function SkillingPage() {
             </div>
             <div className="kpi-card">
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-label"><GraduationCap size={16} style={{ marginRight: 6 }} />Skilling courses (batches)</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   <div>
@@ -312,6 +314,7 @@ export default function SkillingPage() {
             </div>
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('persons')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{fmt(roster)}</div>
                 <div className="kpi-label">Skill roster</div>
                 <p className="kpi-caption">People on the skill-tracking app (n = {fmt(roster)}). {rosterMonthNote}</p>
@@ -344,6 +347,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Trade-wise candidates</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Candidates on the skill roster, by trade. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
@@ -363,6 +367,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Trade-wise batches</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Each bar counts batches, not people. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
@@ -382,6 +387,7 @@ export default function SkillingPage() {
                 </span>
               </div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">
                   Candidates on the skill roster, compared with the mean of {grain}s that have a recorded {grain}.
@@ -407,6 +413,7 @@ export default function SkillingPage() {
             {womenPct != null && (
               <div className="kpi-card">
                 <div className="kpi-body">
+                  <FilterTags allYears />
                   <div className="kpi-value">{womenPct}%</div>
                   <div className="kpi-label">Women participation</div>
                   <p className="kpi-caption">Women as a share of the skill-roster headcount (n = {fmt(roster)}). Skill-tracking app. {rosterMonthNote}</p>
@@ -415,6 +422,7 @@ export default function SkillingPage() {
             )}
             <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('gender', 'Female')}>
               <div className="kpi-body">
+                <FilterTags allYears />
                 <div className="kpi-value">{fmt(womenCount)}</div>
                 <div className="kpi-label">Women on roster</div>
                 <p className="kpi-caption">Female candidates on the skill roster. Skill-tracking app. {rosterMonthNote}</p>
@@ -442,6 +450,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Gender ratio</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Gender on the skill roster. Blank gender is included. Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut
@@ -459,6 +468,7 @@ export default function SkillingPage() {
           <div className="card">
             <div className="card-header"><h3>Age brackets · roster</h3></div>
             <div className="card-body">
+              <FilterTags allYears />
               <p className="kpi-caption">Skill-tracking app</p>
               <p className="chart-caption">Age brackets on the skill roster. Brackets under 2% are grouped as Others. {rosterMonthNote}</p>
               <ColumnBar
@@ -499,6 +509,7 @@ export default function SkillingPage() {
             <div className="card">
               <div className="card-header"><h3>Employment outcomes of candidates</h3></div>
               <div className="card-body">
+                <FilterTags allYears />
                 <p className="kpi-caption">Skill-tracking app</p>
                 <p className="chart-caption">Follow-up work status (n = {formatCount(data.beneficiaries?.monitored_people)} people). Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut

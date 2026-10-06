@@ -13,6 +13,7 @@ import EChart, {
 } from '../../../components/charts/EChart';
 import FarmerGrowth from '../../../components/charts/FarmerGrowth';
 import DrilldownModal from '../../../components/DrilldownModal';
+import FilterTags from '../../../components/FilterTag';
 
 function phaseIncomeOption(rows) {
   const list = rows || [];
@@ -94,9 +95,7 @@ export default function EnterprisePage() {
   }, [fetchData]);
 
   const fmt = (n) => (n || n === 0) ? Number(n).toLocaleString('en-IN') : '—';
-  const monthGap = filters.month
-    ? <p className="chart-caption">Month filter not available for this data</p>
-    : null;
+  const monthIgnored = Boolean(filters.month);
 
   const handleDrilldown = (type, value = null) => {
     setModal({
@@ -124,7 +123,7 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Jubifarm farmers</h3>
               </div>
               <div className="card-body">
-                {monthGap}
+                <FilterTags allYears monthIgnored={monthIgnored} />
                 <p className="chart-caption">Each year is a running total of farmers on the field sheet, not new farmers only.</p>
                 <FarmerGrowth
                   byYear={data.farmers.by_year || []}
@@ -142,7 +141,7 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki dukan</h3>
               </div>
               <div className="card-body">
-                {monthGap}
+                <FilterTags monthIgnored={monthIgnored} />
                 <p className="chart-caption">No outside funding – completely by JBF</p>
                 <div className="kpi-grid">
                   <div className="kpi-card">
@@ -250,6 +249,7 @@ export default function EnterprisePage() {
                 <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>{prog.label}</h3>
               </div>
               <div className="card-body">
+                <FilterTags monthIgnored={monthIgnored} />
                 <div className="kpi-grid">
                   <div className="kpi-card">
                     <div className="kpi-body">
@@ -276,7 +276,7 @@ export default function EnterprisePage() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Enterprise members</h3></div>
             <div className="card-body">
-              {monthGap}
+              <FilterTags allYears monthIgnored={monthIgnored} />
               <p className="chart-caption">Members recorded in enterprise support. Active means status 1.</p>
               <div className="kpi-grid">
                 <div className="kpi-card kpi-card--clickable" onClick={() => handleDrilldown('enterprise_total')}>
@@ -315,7 +315,7 @@ export default function EnterprisePage() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Market access</h3></div>
             <div className="card-body">
-              {monthGap}
+              <FilterTags monthIgnored={monthIgnored} />
               <div className="kpi-grid">
                 <div className="kpi-card">
                   <div className="kpi-body">
@@ -365,7 +365,7 @@ export default function EnterprisePage() {
           <div className="card">
             <div className="card-header"><h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>FY profit</h3></div>
             <div className="card-body">
-              {monthGap}
+              <FilterTags allYears monthIgnored={monthIgnored} />
               <p className="chart-caption">Profit recorded on enterprise monitoring, by financial year.</p>
               <div className="kpi-grid" style={{ marginBottom: '20px' }}>
                 <div className="kpi-card">
@@ -409,6 +409,7 @@ export default function EnterprisePage() {
                 </span>
               </div>
               <div className="card-body">
+                <FilterTags monthIgnored={monthIgnored} />
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
                     <thead>
