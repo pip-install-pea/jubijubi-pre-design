@@ -8,10 +8,11 @@ import EChart, {
   treemapOption,
   stackedBarOption,
   groupedBarOption,
-  sunburstOption,
   roseOption
 } from '../../components/charts/EChart';
+import BrandDoughnut from '../../components/charts/BrandDoughnut';
 import DrilldownModal from '../../components/DrilldownModal';
+import FilterTags from '../../components/FilterTag';
 import YearStrip from '../../components/YearStrip';
 import ChartFocusBar from '../../components/ChartFocusBar';
 import PageRail from '../../components/PageRail';
@@ -19,6 +20,15 @@ import { useChartFocus, patchFilters } from '../../hooks/useChartFocus';
 import { financialYearList } from '../../lib/phpRegistry.js';
 import { NAVY, SKY } from '../../lib/chartTheme';
 import { GraduationCap, Sun } from '@phosphor-icons/react';
+
+const STATE_COLORS = {
+  Rajasthan: '#f97316',
+  Gujarat: '#2563eb',
+  'Uttar Pradesh': '#16a34a',
+  Karnataka: '#dc2626',
+  Maharashtra: '#7c3aed'
+};
+const MONTH_COLORS = ['#1d4ed8', '#0284c7', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#ea580c', '#dc2626', '#db2777', '#9333ea', '#4f46e5', '#475569'];
 
 export default function EducationPage() {
   const [data, setData] = useState({
@@ -32,6 +42,11 @@ export default function EducationPage() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ isOpen: false, title: '', apiUrl: '', params: {} });
   const [kkpLocation, setKkpLocation] = useState('');
+  const [opsPlace, setOpsPlace] = useState('');
+  const [pickedInitiative, setPickedInitiative] = useState('');
+  const [pickedState, setPickedState] = useState('');
+  const [pickedPlace, setPickedPlace] = useState('');
+  const [genderState, setGenderState] = useState('');
   const { focus, select, remove, clear } = useChartFocus();
 
   useEffect(() => {
@@ -66,6 +81,11 @@ export default function EducationPage() {
         quadrant: quadrant.data
       });
       setKkpLocation('');
+      setOpsPlace('');
+      setPickedInitiative('');
+      setPickedState('');
+      setPickedPlace('');
+      setGenderState('');
     } catch (err) {
       console.error('Education data load failed');
     } finally {
@@ -113,8 +133,6 @@ export default function EducationPage() {
   const mixActivities = mix?.muskaan_activity?.activities || [];
   const mixMonths = mix?.muskaan_activity?.months || [];
   const mixFellows = mix?.fellowship;
-  const mixProgramLocs = mixSchool?.program_locations || [];
-  const mixSunburst = mixSchool?.sunburst || [];
   const useSchoolSheets = Number(mixKpis.schools) > 0 || mixByProgram.length > 0;
   const kkpLocations = data.prePost?.by_location || [];
   const kkpPicked = kkpLocations.find((row) => row.location === kkpLocation) || null;
@@ -148,6 +166,7 @@ export default function EducationPage() {
                 <div className="kpi-value">{Number(mixKpis.students || 0).toLocaleString('en-IN')}</div>
                 <div className="kpi-label">Students</div>
                 <p className="kpi-caption">Max headcount per school, then summed</p>
+                <FilterTags monthIgnored={Boolean(filters.month)} />
               </div>
             </div>
             <div className="kpi-card">
@@ -264,6 +283,87 @@ export default function EducationPage() {
 
       {mix && (
         <>
+          {(mix.operational_schools || []).length > 0 && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Operational Schools</h3>
+                <p className="kpi-caption">Distinct Schools Working schools by location.</p>
+                <FilterTags monthIgnored={Boolean(filters.month)} />
+              </div>
+              <div className="card-body">
+                <div className="card-row">
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-body">
+                      <BrandDoughnut
+                        title="Operational Schools"
+                        percent
+                        labels={(mix.operational_schools || []).map((row) => row.label)}
+                        values={(mix.operational_schools || []).map((row) => row.value)}
+                        colors={(mix.operational_schools || []).map((row) => STATE_COLORS[
+                          (mix.states || []).find((state) => (state.places || []).some((place) => place.place === row.label))?.state
+                        ] || '#1e3a8a')}
+                        onSliceClick={(label) => setOpsPlace((current) => (current === label ? '' : label))}
+                      />
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1 }}>
+                    <div className="card-body">
+                      <BrandDoughnut
+                        title={opsPlace ? `Category · ${opsPlace}` : 'Category'}
+                        percent
+                        labels={(opsPlace ? (mix.category_by_place?.[opsPlace] || []) : ['Gen', 'OBC', 'SC/ST', 'EBC'].map((label) => ({
+                          label,
+                          value: Object.values(mix.category_by_place || {}).reduce((sum, items) => sum + ((items || []).find((item) => item.label === label)?.value || 0), 0)
+                        })).filter((item) => item.value > 0)).map((row) => row.label)}
+                        values={(opsPlace ? (mix.category_by_place?.[opsPlace] || []) : ['Gen', 'OBC', 'SC/ST', 'EBC'].map((label) => ({
+                          label,
+                          value: Object.values(mix.category_by_place || {}).reduce((sum, items) => sum + ((items || []).find((item) => item.label === label)?.value || 0), 0)
+                        })).filter((item) => item.value > 0)).map((row) => row.value)}
+                        onSliceClick={(label) => handleDrilldown('mix_caste', label === 'Gen' ? 'General' : label)}
+                      />
+                      {((mix.category_by_place?.Bharuch || []).length === 1 && mix.category_by_place.Bharuch[0]?.label === 'Gen') && (
+                        <p className="chart-caption">Bharuch students are all recorded as General.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(mix.initiatives || []).length > 0 && (
+            <div className="card" style={{ marginBottom: '24px' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Initiatives</h3>
+                <p className="kpi-caption">Muskaan Activity counts are participations. A month filter changes Khusiyon ki Pathshala 2.0 and Muskaan Activity only.</p>
+              </div>
+              <div className="card-body">
+                <EChart
+                  option={groupedBarOption(
+                    mix.initiatives.map((row) => row.name),
+                    [{ label: 'Students', data: mix.initiatives.map((row) => row.students) }],
+                    { horizontal: true, showLabels: true, legend: false }
+                  )}
+                  height={Math.max(220, mix.initiatives.length * 72)}
+                  onPoint={(point) => point.name && setPickedInitiative((current) => (current === point.name ? '' : point.name))}
+                />
+                {pickedInitiative && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>{pickedInitiative}</h3>
+                    <EChart
+                      option={groupedBarOption(
+                        (mix.initiatives.find((row) => row.name === pickedInitiative)?.programs || []).map((row) => row.participations ? `${row.name} (participations)` : row.name),
+                        [{ label: 'Students', data: (mix.initiatives.find((row) => row.name === pickedInitiative)?.programs || []).map((row) => row.students) }],
+                        { horizontal: true, showLabels: true, withPercent: true, legend: false }
+                      )}
+                      height={Math.max(180, ((mix.initiatives.find((row) => row.name === pickedInitiative)?.programs || []).length) * 48)}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {(mixKpis.schools > 0 || mixByProgram.length > 0) && (
             <div className="card" style={{ marginBottom: '24px' }}>
               <div className="card-header">
@@ -299,39 +399,127 @@ export default function EducationPage() {
                     </div>
                   </div>
                 </div>
-                {mixSunburst.length > 0 && (
+                {(mix.states || []).length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Statewise programs</h3>
-                    <EChart
-                      option={sunburstOption(mixSunburst)}
-                      height={380}
-                      focus={focus}
-                      onPoint={(p) => {
-                        if (!p.name) return;
-                        const isProgram = mixByProgram.some((r) => r.label === p.name);
-                        handleDrilldown(isProgram ? 'mix_program' : 'mix_location', p.name, {}, p.nativeEvent);
-                      }}
-                    />
+                    <FilterTags monthIgnored={Boolean(filters.month)} />
+                    <p className="chart-caption">
+                      {pickedPlace
+                        ? `${pickedState} · ${pickedPlace}`
+                        : pickedState
+                          ? pickedState
+                          : 'Choose a state, then a location.'}
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '8px 0 12px' }}>
+                      {(pickedState || pickedPlace) && (
+                        <button type="button" className="filter-tag" onClick={() => { setPickedState(''); setPickedPlace(''); }}>All states</button>
+                      )}
+                      {pickedState && (
+                        <button type="button" className="filter-tag" onClick={() => setPickedPlace('')}>{pickedState}</button>
+                      )}
+                    </div>
+                    {!pickedState && (
+                      <div className="kpi-grid">
+                        {mix.states.map((row) => (
+                          <button
+                            key={row.state}
+                            type="button"
+                            className="kpi-card"
+                            onClick={() => setPickedState(row.state)}
+                            style={{ textAlign: 'left', borderTop: `4px solid ${STATE_COLORS[row.state] || '#1e3a8a'}` }}
+                          >
+                            <div className="kpi-body">
+                              <div className="kpi-label">{row.state}</div>
+                              <div className="kpi-value">{Number(row.students || 0).toLocaleString('en-IN')}</div>
+                              <p className="kpi-caption">{Number(row.schools || 0).toLocaleString('en-IN')} schools</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {pickedState && !pickedPlace && (
+                      <div className="kpi-grid">
+                        {(mix.states.find((row) => row.state === pickedState)?.places || []).map((place) => (
+                          <button key={place.place} type="button" className="kpi-card" onClick={() => setPickedPlace(place.place)} style={{ textAlign: 'left' }}>
+                            <div className="kpi-body">
+                              <div className="kpi-label">{place.place}</div>
+                              <p className="kpi-caption">{place.programs.length} programmes</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {pickedPlace && (
+                      <EChart
+                        option={groupedBarOption(
+                          (mix.states.find((row) => row.state === pickedState)?.places || []).find((place) => place.place === pickedPlace)?.programs.map((row) => row.name) || [],
+                          [{
+                            label: 'Students',
+                            data: ((mix.states.find((row) => row.state === pickedState)?.places || []).find((place) => place.place === pickedPlace)?.programs || []).map((row) => row.students)
+                          }],
+                          { horizontal: true, showLabels: true, legend: false }
+                        )}
+                        height={280}
+                        onPoint={(point) => point.name && handleDrilldown('mix_program', point.name)}
+                      />
+                    )}
                   </div>
                 )}
-                {mixProgramLocs.length > 0 && (
+                {(mix.states || []).length > 0 && (
                   <div style={{ marginTop: '16px' }}>
                     <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location wise Program</h3>
+                    <p className="chart-caption">Students by state. Click a bar for male, female, and gender not split.</p>
+                    <FilterTags monthIgnored={Boolean(filters.month)} />
+                    <EChart
+                      option={groupedBarOption(
+                        mix.states.map((row) => row.state),
+                        [{ label: 'Students', data: mix.states.map((row) => row.students) }],
+                        {
+                          horizontal: true,
+                          showLabels: true,
+                          withPercent: true,
+                          legend: false,
+                          colors: mix.states.map((row) => STATE_COLORS[row.state] || '#1e3a8a')
+                        }
+                      )}
+                      height={Math.max(220, mix.states.length * 56)}
+                      onPoint={(point) => point.name && setGenderState(point.name)}
+                    />
+                    {genderState && (
+                      <div style={{ marginTop: '12px' }}>
+                        <h4 className="chart-inline-title">{genderState}</h4>
+                        {(() => {
+                          const row = mix.states.find((item) => item.state === genderState);
+                          if (!row) return null;
+                          const slices = [
+                            { label: 'Male', value: row.male },
+                            { label: 'Female', value: row.female },
+                            ...(row.not_split > 0 ? [{ label: 'Gender not split', value: row.not_split }] : [])
+                          ];
+                          return (
+                            <BrandDoughnut
+                              percent
+                              labels={slices.map((item) => item.label)}
+                              values={slices.map((item) => item.value)}
+                            />
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {(mixSchool?.location_pies || []).length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Programme by location</h3>
                     <div className="program-loc-grid">
-                      {mixProgramLocs.map((block) => (
+                      {mixSchool.location_pies.map((block) => (
                         <div key={block.program} className="program-loc-card">
                           <h4 className="chart-inline-title">{block.program}</h4>
-                          <EChart
-                            option={groupedBarOption(
-                              (block.rows || []).map((r) => r.label),
-                              [{ label: 'Students', data: (block.rows || []).map((r) => r.value) }],
-                              { horizontal: true }
-                            )}
-                            height={Math.max(200, (block.rows || []).length * 32)}
-                            onPoint={(p) => {
-                              if (!p.name) return;
-                              handleDrilldown('mix_heat', block.program, { location: p.name });
-                            }}
+                          <BrandDoughnut
+                            percent
+                            labels={(block.rows || []).map((row) => row.label)}
+                            values={(block.rows || []).map((row) => row.value)}
+                            onSliceClick={(label) => handleDrilldown('mix_heat', block.program, { location: label })}
                           />
                         </div>
                       ))}
@@ -377,16 +565,21 @@ export default function EducationPage() {
                 />
                 {mixMonths.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>By month</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                      <h3 style={{ fontSize: '14px', fontWeight: 'bold' }}>Total students: {Number(mix?.muskaan_activity?.students || 0).toLocaleString('en-IN')}</h3>
+                      <p className="kpi-caption">Male {Number(mix?.muskaan_activity?.male || 0).toLocaleString('en-IN')} | Female {Number(mix?.muskaan_activity?.female || 0).toLocaleString('en-IN')}</p>
+                    </div>
+                    <p className="chart-caption">Activity participations</p>
                     <EChart
                       option={groupedBarOption(
-                        mixMonths.map((r) => r.label),
-                        [{ label: 'Students', data: mixMonths.map((r) => r.value) }]
+                        mixMonths.map((row) => row.label),
+                        [{ label: 'Participations', data: mixMonths.map((row) => row.value) }],
+                        { showLabels: true, withPercent: true, legend: false, colors: mixMonths.map((_, index) => MONTH_COLORS[index % MONTH_COLORS.length]) }
                       )}
-                      onPoint={(p) => {
-                        if (!p.name) return;
-                        const row = mixMonths.find((r) => r.label === p.name);
-                        handleDrilldown('mix_month', p.name, {
+                      onPoint={(point) => {
+                        if (!point.name) return;
+                        const row = mixMonths.find((item) => item.label === point.name);
+                        handleDrilldown('mix_month', point.name, {
                           month: row?.month,
                           year: row?.year
                         });
