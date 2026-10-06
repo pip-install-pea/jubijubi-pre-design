@@ -1347,6 +1347,15 @@ img {
   margin: 0 0 8px;
 }
 
+.callout {
+  background: #eff6ff;
+  border-left: 4px solid var(--navy);
+  color: var(--navy);
+  font-weight: 600;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+}
+
 .chart-wrap {
   width: 100%;
 }

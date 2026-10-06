@@ -139,17 +139,17 @@ export default function EnterprisePage() {
           {data.didi?.status === 'ok' && (
             <div className="card" style={{ marginBottom: '24px' }}>
               <div className="card-header">
-                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki dukan</h3>
+                <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>Didi ki Dukan</h3>
               </div>
               <div className="card-body">
                 {monthGap}
-                <p className="chart-caption">No outside funding – completely by JBF</p>
+                <div className="callout">Fully funded by Jubilant Bhartia Foundation (JBF).</div>
                 <div className="kpi-grid">
                   <div className="kpi-card">
                     <div className="kpi-body">
                       <div className="kpi-value">{fmt(data.didi.people)}</div>
                       <div className="kpi-label">Women</div>
-                      <p className="kpi-caption">Counted per phase; a woman in more than one phase is counted in each.</p>
+                      <p className="kpi-caption">Phase participations: a woman in more than one phase is counted in each. Unique women need the Unique Beneficiary ID (in progress).</p>
                     </div>
                   </div>
                   <div className="kpi-card">
@@ -331,13 +331,15 @@ export default function EnterprisePage() {
                     <p className="kpi-caption">Distinct agency names on those rows.</p>
                   </div>
                 </div>
-                <div className="kpi-card">
-                  <div className="kpi-body">
-                    <div className="kpi-value">{formatINR(data.market?.total_sales_generated)}</div>
-                    <div className="kpi-label">Sales estimate</div>
-                    <p className="kpi-caption">Sum of the agencies' reported average sales.</p>
+                {data.market?.show_sales_total && (
+                  <div className="kpi-card">
+                    <div className="kpi-body">
+                      <div className="kpi-value">{formatINR(data.market?.total_sales_generated)}</div>
+                      <div className="kpi-label">Sales estimate</div>
+                      <p className="kpi-caption">Sum of the agencies' reported average sales.</p>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               <EChart
                 option={{
@@ -359,6 +361,9 @@ export default function EnterprisePage() {
                 height={220}
                 caption="Sales as reported (text bands), FY 2025-26"
               />
+              {!data.market?.show_sales_total && (
+                <p className="chart-caption">Total not shown until the reporting period and basis are confirmed by JBF.</p>
+              )}
             </div>
           </div>
 

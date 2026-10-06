@@ -252,7 +252,7 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0, colors = [] } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0, colors = [], labelTexts = null } = {}) {
   const total = (datasets || []).reduce((sum, ds) => sum + (ds.data || []).reduce((inner, n) => inner + (Number(n) || 0), 0), 0);
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
@@ -279,6 +279,7 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
           show: true,
           position: horizontal ? 'right' : 'top',
           formatter: (p) => {
+            if (Array.isArray(labelTexts)) return labelTexts[p.dataIndex] || '';
             const raw = p.value && typeof p.value === 'object' ? p.value.value : p.value;
             const n = Number(raw);
             if (!Number.isFinite(n)) return '';
@@ -292,23 +293,60 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
   };
 }
 
-export function stackedBarOption(labels, datasets, { horizontal = false } = {}) {
+export function stackedBarOption(labels, datasets, { horizontal = false, percentStack = false, segmentLabels = false, gridLeft = 0 } = {}) {
+  const totals = (labels || []).map((_, index) =>
+    (datasets || []).reduce((sum, ds) => sum + (Number(ds.data?.[index]) || 0), 0)
+  );
+  const seriesData = (ds) => {
+    if (!percentStack) return ds.data;
+    return (ds.data || []).map((value, index) => {
+      const count = Number(value) || 0;
+      const total = totals[index] || 0;
+      return { value: total ? (count / total) * 100 : 0, count };
+    });
+  };
   return {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
+    tooltip: percentStack ? {
+      trigger: 'axis',
+      renderMode: 'richText',
+      formatter: (params) => {
+        const rows = Array.isArray(params) ? params : [params];
+        const lines = rows.map((row) => {
+          const count = row.data && typeof row.data === 'object' ? Number(row.data.count) || 0 : Number(row.value) || 0;
+          const pct = Number(row.value);
+          const shown = Number.isFinite(pct) ? pct.toFixed(1) : '0.0';
+          return `${row.seriesName}: ${count.toLocaleString('en-IN')} (${shown}%)`;
+        });
+        return [rows[0]?.axisValue || '', ...lines].filter(Boolean).join('\n');
+      }
+    } : { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: { bottom: 0 },
-    grid: { left: 8, right: 16, top: 24, bottom: 48, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    grid: { left: gridLeft || 8, right: 16, top: 24, bottom: 48, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
     xAxis: horizontal
-      ? { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
+      ? { type: 'value', max: percentStack ? 100 : undefined, axisLabel: { formatter: (v) => percentStack ? `${v}%` : Number(v).toLocaleString('en-IN') } }
       : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
     yAxis: horizontal
       ? { type: 'category', data: labels }
-      : { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
+      : { type: 'value', max: percentStack ? 100 : undefined, axisLabel: { formatter: (v) => percentStack ? `${v}%` : Number(v).toLocaleString('en-IN') } },
     series: (datasets || []).map((ds) => ({
       type: 'bar',
       name: ds.label,
       stack: 'total',
       emphasis: { focus: 'series' },
-      data: ds.data
+      data: seriesData(ds),
+      ...(ds.color ? { itemStyle: { color: ds.color } } : {}),
+      ...(segmentLabels ? {
+        label: {
+          show: true,
+          formatter: (point) => {
+            const count = point.data && typeof point.data === 'object' ? Number(point.data.count) || 0 : Number(point.value) || 0;
+            if (!count) return '';
+            const total = totals[point.dataIndex] || 0;
+            const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+            return `${count.toLocaleString('en-IN')} (${pct}%)`;
+          }
+        }
+      } : {})
     }))
   };
 }
