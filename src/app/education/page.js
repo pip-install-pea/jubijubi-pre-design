@@ -120,9 +120,6 @@ export default function EducationPage() {
   const kkpRows = kkpPicked
     ? kkpPicked.rows
     : (data.prePost?.status !== 'no_data' ? (data.prePost?.data || []) : []);
-  const kkpDelta = kkpRows.length
-    ? kkpRows.reduce((s, r) => s + (Number(r.avg_post) || 0) - (Number(r.avg_pre) || 0), 0) / kkpRows.length
-    : null;
   const showQuadrant = Array.isArray(data.quadrant?.points) && data.quadrant.points.length > 0;
   const showMuskaan = data.muskaan?.status !== 'no_data' && data.muskaan?.data?.length > 0;
 
@@ -199,23 +196,14 @@ export default function EducationPage() {
             </div>
           </>
         )}
-        {kkpDelta != null && (
-          <>
-            <div className="kpi-card">
-              <div className="kpi-body">
-                <div className="kpi-value">{kkpDelta > 0 ? '+' : ''}{kkpDelta.toFixed(1)}</div>
-                <div className="kpi-label">Mean KKP gain</div>
-                <p className="kpi-caption">Post − pre, location scores, not students</p>
-              </div>
+        {kkpRows.length > 0 && (
+          <div className="kpi-card">
+            <div className="kpi-body">
+              <div className="kpi-value">{kkpRows.length}</div>
+              <div className="kpi-label">KKP values</div>
+              <p className="kpi-caption">Location-level skilltracking scores</p>
             </div>
-            <div className="kpi-card">
-              <div className="kpi-body">
-                <div className="kpi-value">{kkpRows.length}</div>
-                <div className="kpi-label">KKP values</div>
-                <p className="kpi-caption">Location-level skilltracking scores</p>
-              </div>
-            </div>
-          </>
+          </div>
         )}
         {mixKkp?.total_sessions > 0 && (
           <div className="kpi-card">
