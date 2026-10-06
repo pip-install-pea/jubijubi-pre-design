@@ -175,8 +175,9 @@ export default function EducationPage() {
             {Number(mixKpis.teachers) > 0 && (
               <div className="kpi-card">
                 <div className="kpi-body">
-                  <div className="kpi-value">{Number(mixKpis.teachers).toLocaleString('en-IN')}</div>
-                  <div className="kpi-label">Teachers reached</div>
+                <div className="kpi-value">{Number(mixKpis.teachers).toLocaleString('en-IN')}</div>
+                <div className="kpi-label">Teachers covered</div>
+                <p className="kpi-caption">Schools Working, Khusiyon ki Pathshala, Edulab, and HP CLAP. Library on Wheels is excluded because its teachers field holds student counts.</p>
                 </div>
               </div>
             )}
