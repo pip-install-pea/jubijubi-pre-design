@@ -246,7 +246,7 @@ export default function EducationPage() {
                     </div>
                   </div>
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Male and female by programme</h3></div>
+                    <div className="card-header"><h3>Gender Ratio program wise</h3></div>
                     <div className="card-body">
                       <EChart
                         option={stackedBarOption(
@@ -254,7 +254,8 @@ export default function EducationPage() {
                           [
                             { label: 'Male', data: mixByProgram.map((r) => r.male) },
                             { label: 'Female', data: mixByProgram.map((r) => r.female) }
-                          ]
+                          ],
+                          { rotateLabels: true, pctLabels: true }
                         )}
                         focus={focus}
                         onPoint={(p) => p.name && handleDrilldown('mix_program', p.name, {}, p.nativeEvent)}
