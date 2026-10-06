@@ -10,7 +10,7 @@ import {
   EDU_CASTE_IDS,
   kkpNamesForStates
 } from './eduGeo.js';
-import { INITIATIVE_PROGRAMS, SCHOOL_NETWORK } from './educationInitiatives.js';
+import { INITIATIVE_PROGRAMS, INITIATIVES, SCHOOL_NETWORK } from './educationInitiatives.js';
 
 const GEO = { module: 'education' };
 
@@ -350,6 +350,34 @@ const FY_MONTH_ORDER = {
   march: 12, mar: 12
 };
 
+const TEXT_MONTHS = [
+  { keys: ['4', 'april', 'apr'], forms: ['april', 'apr'] },
+  { keys: ['5', 'may'], forms: ['may'] },
+  { keys: ['6', 'june', 'jun'], forms: ['june', 'jun'] },
+  { keys: ['7', 'july', 'jul'], forms: ['july', 'jul'] },
+  { keys: ['8', 'august', 'aug'], forms: ['august', 'aug'] },
+  { keys: ['9', 'september', 'sep', 'sept'], forms: ['september', 'sep', 'sept'] },
+  { keys: ['10', 'october', 'oct'], forms: ['october', 'oct'] },
+  { keys: ['11', 'november', 'nov'], forms: ['november', 'nov'] },
+  { keys: ['12', 'december', 'dec'], forms: ['december', 'dec'] },
+  { keys: ['1', 'january', 'jan'], forms: ['january', 'jan'] },
+  { keys: ['2', 'february', 'feb'], forms: ['february', 'feb'] },
+  { keys: ['3', 'march', 'mar'], forms: ['march', 'mar'] }
+];
+
+export function educationMonthClause(column, filters, params, prefix = 'edu_month') {
+  const wanted = new Set(String(filters?.month || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean));
+  if (!wanted.size) return null;
+  const forms = [...new Set(TEXT_MONTHS.filter((row) => row.keys.some((key) => wanted.has(key))).flatMap((row) => row.forms))];
+  if (!forms.length) return null;
+  const keys = forms.map((form, index) => {
+    const key = `${prefix}_${index}`;
+    params[key] = form;
+    return `:${key}`;
+  });
+  return `lower(btrim(${column}::text)) IN (${keys.join(', ')})`;
+}
+
 function monthYearSortKey(month, year) {
   const start = parseInt(String(year || '').slice(0, 4), 10) || 0;
   const raw = String(month || '').trim().toLowerCase();
@@ -470,21 +498,26 @@ export async function getMixprogramSchools(filters) {
     params
   );
 
+  const kkp2Where = andPid(w, ['5']);
+  const kkp2Month = educationMonthClause('m.month', filters, params, 'kkp2_month');
   const kkp2Themes = await safeFetchall(
     `SELECT COALESCE(${displaySql('m.theme_touched')}, 'Unknown') AS label,
             COALESCE(SUM(m.students_total), 0)::integer AS value
      FROM education_mixprogram m
-     ${andPid(w, ['5'])}
+     ${kkp2Month ? `${kkp2Where} AND ${kkp2Month}` : kkp2Where}
      GROUP BY ${foldSql('m.theme_touched')}
      ORDER BY value DESC`,
     params
   );
 
+  const muskaanWhere = andPid(w, ['6']);
+  const muskaanMonth = educationMonthClause('m.month', filters, params, 'muskaan_month');
+  const muskaanScoped = muskaanMonth ? `${muskaanWhere} AND ${muskaanMonth}` : muskaanWhere;
   const muskaanActivities = await safeFetchall(
     `SELECT COALESCE(${displaySql('m.activity_name')}, 'Unknown') AS label,
             COALESCE(SUM(m.students_total), 0)::integer AS value
      FROM education_mixprogram m
-     ${andPid(w, ['6'])}
+     ${muskaanScoped}
      GROUP BY ${foldSql('m.activity_name')}
      ORDER BY value DESC`,
     params
@@ -493,9 +526,11 @@ export async function getMixprogramSchools(filters) {
   const muskaanMonthRows = await safeFetchall(
     `SELECT COALESCE(${displaySql('m.month')}, 'Unknown') AS month,
             COALESCE(NULLIF(TRIM(m.year), ''), 'Unknown') AS year,
-            COALESCE(SUM(m.students_total), 0)::integer AS value
+            COALESCE(SUM(m.students_total), 0)::integer AS value,
+            COALESCE(SUM(m.students_male), 0)::integer AS male,
+            COALESCE(SUM(m.students_female), 0)::integer AS female
      FROM education_mixprogram m
-     ${andPid(w, ['6'])}
+     ${muskaanScoped}
      GROUP BY ${softFoldSql('m.month')}, COALESCE(NULLIF(TRIM(m.year), ''), 'Unknown')`,
     params
   );
@@ -504,7 +539,9 @@ export async function getMixprogramSchools(filters) {
       month: r.month,
       year: r.year,
       label: r.year && r.year !== 'Unknown' ? `${r.month} ${r.year}` : r.month,
-      value: Number(r.value) || 0
+      value: Number(r.value) || 0,
+      male: Number(r.male) || 0,
+      female: Number(r.female) || 0
     }))
     .sort((a, b) => monthYearSortKey(a.month, a.year) - monthYearSortKey(b.month, b.year));
 
@@ -525,9 +562,12 @@ export async function getMixprogramSchools(filters) {
   );
 
   const activityCountRows = await safeFetchall(
-    `SELECT COUNT(*)::integer AS rows
+    `SELECT COUNT(*)::integer AS rows,
+            COALESCE(SUM(m.students_total), 0)::integer AS students,
+            COALESCE(SUM(m.students_male), 0)::integer AS male,
+            COALESCE(SUM(m.students_female), 0)::integer AS female
      FROM education_mixprogram m
-     ${andPid(w, ['6'])}`,
+     ${muskaanScoped}`,
     params
   );
 
@@ -604,6 +644,175 @@ export async function getMixprogramSchools(filters) {
     girls_pct: sexDenom > 0 ? Number(((female / sexDenom) * 100).toFixed(1)) : null
   };
 
+  const operationalRows = await safeFetchall(
+    `SELECT place AS label, COUNT(*)::integer AS value
+     FROM (
+       SELECT ${placeSql} AS place, ${foldSql('m.school_name')} AS school_key
+       FROM education_mixprogram m
+       ${andPid(w, ['3'])}
+         AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+       GROUP BY 1, 2
+     ) schools
+     GROUP BY place
+     ORDER BY value DESC`,
+    params
+  );
+
+  const categoryByPlaceRows = await safeFetchall(
+    `SELECT place,
+            COALESCE(SUM(category_gen), 0)::integer AS gen,
+            COALESCE(SUM(category_sc_st), 0)::integer AS sc_st,
+            COALESCE(SUM(category_obc), 0)::integer AS obc,
+            COALESCE(SUM(category_ebc), 0)::integer AS ebc
+     FROM (
+       SELECT ${placeSql} AS place,
+              ${foldSql('m.school_name')} AS school_key,
+              MAX(m.category_gen) AS category_gen,
+              MAX(m.category_sc_st) AS category_sc_st,
+              MAX(m.category_obc) AS category_obc,
+              MAX(m.category_ebc) AS category_ebc
+       FROM education_mixprogram m
+       ${andPid(w, EDU_CASTE_IDS)}
+         AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+       GROUP BY 1, 2
+     ) caste_schools
+     GROUP BY place`,
+    params
+  );
+  const categoryByPlace = {};
+  categoryByPlaceRows.forEach((row) => {
+    const items = [
+      { label: 'Gen', value: Number(row.gen) || 0 },
+      { label: 'OBC', value: Number(row.obc) || 0 },
+      { label: 'SC/ST', value: Number(row.sc_st) || 0 },
+      { label: 'EBC', value: Number(row.ebc) || 0 }
+    ].filter((item) => item.value > 0);
+    categoryByPlace[row.place] = items;
+  });
+
+  const stateRows = await safeFetchall(
+    `SELECT state, COUNT(*)::integer AS schools,
+            COALESCE(SUM(students_total), 0)::integer AS students,
+            COALESCE(SUM(students_male), 0)::integer AS male,
+            COALESCE(SUM(students_female), 0)::integer AS female
+     FROM (
+       SELECT ${eduStateSql()} AS state,
+              ${placeSql} AS place,
+              ${foldSql('m.school_name')} AS school_key,
+              MAX(m.students_total) AS students_total,
+              MAX(m.students_male) AS students_male,
+              MAX(m.students_female) AS students_female
+       FROM education_mixprogram m
+       ${schoolWhere}
+         AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+       GROUP BY 1, 2, 3
+     ) schools
+     GROUP BY state
+     ORDER BY students DESC`,
+    params
+  );
+
+  const placeProgramRows = await safeFetchall(
+    `SELECT ${eduStateSql()} AS state,
+            ${placeSql} AS place,
+            COALESCE(NULLIF(TRIM(p.program_name), ''), m.program_id::text) AS program,
+            COALESCE(SUM(m.students_total), 0)::integer AS students
+     FROM education_mixprogram m
+     LEFT JOIN skilltracking_program p ON p.program_id::text = m.program_id::text
+     ${andPid(w, INITIATIVE_PROGRAMS.map((program) => program.id).concat(EDU_SCHOOL_IDS))}
+     GROUP BY 1, 2, 3
+     ORDER BY students DESC`,
+    params
+  );
+
+  const sheetTotals = await safeFetchall(
+    `SELECT program_id, COALESCE(SUM(students_total), 0)::integer AS students
+     FROM (
+       SELECT m.program_id::text AS program_id,
+              ${placeSql} AS place,
+              ${foldSql('m.school_name')} AS school_key,
+              MAX(m.students_total) AS students_total
+       FROM education_mixprogram m
+       ${andPid(w, ['4', '8', '9'])}
+         AND NULLIF(TRIM(m.school_name), '') IS NOT NULL
+       GROUP BY 1, 2, 3
+     ) schools
+     GROUP BY program_id`,
+    params
+  );
+  const initiativeMonth = educationMonthClause('m.month', filters, params, 'init_month');
+  const sumTotals = await safeFetchall(
+    `SELECT m.program_id::text AS program_id,
+            COALESCE(SUM(m.students_total), 0)::integer AS students
+     FROM education_mixprogram m
+     ${andPid(w, ['5', '6'])}
+       ${initiativeMonth ? `AND ${initiativeMonth}` : ''}
+     GROUP BY m.program_id`,
+    params
+  );
+  const rowTotals = await safeFetchall(
+    `SELECT m.program_id::text AS program_id, COUNT(*)::integer AS students
+     FROM education_mixprogram m
+     ${andPid(w, ['7', '13'])}
+     GROUP BY m.program_id`,
+    params
+  );
+  const libraryTotals = await safeFetchall(
+    `SELECT '14' AS program_id,
+            COALESCE(SUM(
+              CASE
+                WHEN COALESCE(m.students_total, 0) > 0 THEN m.students_total
+                ELSE COALESCE(m.students_male, 0) + COALESCE(m.students_female, 0)
+              END
+            ), 0)::integer AS students
+     FROM education_mixprogram m
+     ${andPid(w, ['14'])}`,
+    params
+  );
+  const studentByProgram = new Map();
+  [...sheetTotals, ...sumTotals, ...rowTotals, ...libraryTotals].forEach((row) => {
+    studentByProgram.set(String(row.program_id), Number(row.students) || 0);
+  });
+  const initiatives = INITIATIVES.map((item) => {
+    const itemPrograms = item.programs
+      .map((program) => ({
+        id: program.id,
+        name: program.name,
+        students: studentByProgram.get(program.id) || 0,
+        participations: Boolean(program.participations)
+      }))
+      .filter((program) => program.students > 0);
+    return {
+      name: item.name,
+      students: itemPrograms.reduce((sum, program) => sum + program.students, 0),
+      programs: itemPrograms
+    };
+  }).filter((item) => item.students > 0);
+
+  const states = stateRows
+    .filter((row) => row.state && row.state !== 'Not mapped')
+    .map((row) => {
+      const students = Number(row.students) || 0;
+      const male = Number(row.male) || 0;
+      const female = Number(row.female) || 0;
+      const places = {};
+      placeProgramRows
+        .filter((item) => item.state === row.state)
+        .forEach((item) => {
+          if (!places[item.place]) places[item.place] = [];
+          if (Number(item.students) > 0) places[item.place].push({ name: item.program, students: Number(item.students) || 0 });
+        });
+      return {
+        state: row.state,
+        students,
+        schools: Number(row.schools) || 0,
+        male,
+        female,
+        not_split: Math.max(0, students - male - female),
+        places: Object.entries(places).map(([place, programs]) => ({ place, programs }))
+      };
+    });
+
   const hasAny =
     schoolKpis.schools > 0 ||
     byProgram.length > 0 ||
@@ -636,6 +845,15 @@ export async function getMixprogramSchools(filters) {
         program,
         rows: rows.sort((a, b) => b.value - a.value).slice(0, 8)
       })),
+      location_pies: Object.entries(
+        locProg.reduce((acc, row) => {
+          const program = row.program || 'Unknown';
+          if (!acc[program]) acc[program] = [];
+          const students = Number(row.students) || 0;
+          if (students > 0) acc[program].push({ label: row.location, value: students });
+          return acc;
+        }, {})
+      ).map(([program, rows]) => ({ program, rows })),
       sunburst
     },
     kkp: {
@@ -646,10 +864,17 @@ export async function getMixprogramSchools(filters) {
     muskaan_activity: {
       activities: muskaanActivities,
       months: muskaanMonths,
-      rows: Number(activityCountRows[0]?.rows) || 0
+      rows: Number(activityCountRows[0]?.rows) || 0,
+      students: Number(activityCountRows[0]?.students) || 0,
+      male: Number(activityCountRows[0]?.male) || 0,
+      female: Number(activityCountRows[0]?.female) || 0
     },
     programs,
     network,
+    operational_schools: operationalRows.map((row) => ({ label: row.label, value: Number(row.value) || 0 })),
+    category_by_place: categoryByPlace,
+    initiatives,
+    states,
     fellowship: {
       fellows: Number(fellowshipCountRows[0]?.fellows) || 0,
       gender: fellowshipGender

@@ -85,7 +85,8 @@ function payloadFor(mod, filters) {
       state_id: filters.state_id,
       district_id: filters.district_id,
       academic_year: ay,
-      financial_year: fy || ay
+      financial_year: fy || ay,
+      month: filters.month || ''
     };
   }
   if (mod === 'livelihood') {
@@ -135,7 +136,7 @@ function readUrl(searchParams, mod) {
     next.financial_year = clock;
   }
   const month = searchParams.get('month');
-  if (month && mod === 'livelihood') next.month = month;
+  if (month && (mod === 'livelihood' || mod === 'education')) next.month = month;
   return next;
 }
 
@@ -432,7 +433,7 @@ export default function GlobalFilters({ onApply }) {
               />
             )}
 
-            {moduleName === 'livelihood' && (
+            {(moduleName === 'livelihood' || moduleName === 'education') && (
               <MultiSelect
                 label="Month"
                 name="month"

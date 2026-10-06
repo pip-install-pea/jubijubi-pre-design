@@ -3,7 +3,7 @@ import { getSessionUser } from '@/lib/auth.js';
 import { getFiltersFromRequest, bindIn, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
-import { getMixprogramSchools } from '@/lib/educationAnalytics.js';
+import { getMixprogramSchools, educationMonthClause } from '@/lib/educationAnalytics.js';
 import { eqFold, eqSoft } from '@/lib/labelNorm.js';
 import { eduPlaceSql, excludeWowClause, EDU_SCHOOL_IDS, EDU_CASTE_IDS } from '@/lib/eduGeo.js';
 import { addColFilters } from '@/lib/drilldownFilters.js';
@@ -410,6 +410,8 @@ export async function GET(req) {
 
     if (drillType === 'mix_activities') {
       const year = filters.academic_year || filters.financial_year;
+      const monthParams = {};
+      const monthClause = educationMonthClause('m.month', filters, monthParams, 'drill_month');
       const payload = await queryMixRows({
         searchParams,
         year,
@@ -417,7 +419,8 @@ export async function GET(req) {
         page,
         perPage,
         filters,
-        extraClauses: [`m.program_id::text = '6'`],
+        extraClauses: [`m.program_id::text = '6'`, ...(monthClause ? [monthClause] : [])],
+        extraParams: monthParams,
         qSql: '(m.activity_name ILIKE :q OR m.month ILIKE :q)',
         selectSql: `SELECT COALESCE(NULLIF(TRIM(m.activity_name), ''), '—') AS activity_name,
           COALESCE(NULLIF(TRIM(m.month), ''), '—') AS month,
@@ -538,11 +541,13 @@ export async function GET(req) {
         return NextResponse.json(payload);
       }
       if (drillType === 'mix_theme') {
+        const monthParams = {};
+        const monthClause = educationMonthClause('m.month', filters, monthParams, 'theme_month');
         const payload = await queryMixRows({
           searchParams,
           ...mixCommon,
-          extraClauses: [`m.program_id::text = '5'`, eqFold('m.theme_touched', 'drill_value')],
-          extraParams: { drill_value: value },
+          extraClauses: [`m.program_id::text = '5'`, eqFold('m.theme_touched', 'drill_value'), ...(monthClause ? [monthClause] : [])],
+          extraParams: { drill_value: value, ...monthParams },
           qSql: '(m.school_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.school_name), ''), '—') AS school_name,
             ${eduPlaceSql()} AS location,
@@ -562,17 +567,20 @@ export async function GET(req) {
         const monthYear = String(value || '').trim().match(/^(.*)\s+(\d{4}(?:-\d{2})?)$/);
         const monthValue = searchParams.get('month') || (monthYear ? monthYear[1].trim() : value);
         const yearValue = searchParams.get('year') || monthYear?.[2] || year;
+        const monthParams = {};
+        const monthClause = educationMonthClause('m.month', filters, monthParams, 'act_month');
         const payload = await queryMixRows({
           searchParams,
           ...mixCommon,
           year: field === 'month' ? yearValue : year,
           extraClauses: [
             `m.program_id::text = '6'`,
+            ...(monthClause ? [monthClause] : []),
             field === 'month'
               ? eqSoft('m.month', 'drill_value')
               : eqFold(`m.${field}`, 'drill_value')
           ],
-          extraParams: { drill_value: field === 'month' ? monthValue : value },
+          extraParams: { drill_value: field === 'month' ? monthValue : value, ...monthParams },
           qSql: '(m.activity_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.activity_name), ''), '—') AS activity_name,
             COALESCE(NULLIF(TRIM(m.month), ''), '—') AS month,
