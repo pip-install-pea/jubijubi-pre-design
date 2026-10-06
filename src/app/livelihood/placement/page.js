@@ -6,10 +6,10 @@ import { Briefcase, Users } from '@phosphor-icons/react';
 import BrandDoughnut from '../../../components/charts/BrandDoughnut';
 import ColumnBar from '../../../components/charts/ColumnBar';
 import FunnelBars from '../../../components/charts/FunnelBars';
-import EChart, { comboLineBarOption, groupedBarOption } from '../../../components/charts/EChart';
+import EChart, { groupedBarOption } from '../../../components/charts/EChart';
 import DrilldownModal from '../../../components/DrilldownModal';
 import FilterTags from '../../../components/FilterTag';
-import { formatCount, formatINR, formatPercent } from '../../../lib/format';
+import { formatCount, formatINR, formatINRFull, formatPercent } from '../../../lib/format';
 
 const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
 
@@ -44,21 +44,25 @@ export default function PlacementPage() {
       Object.fromEntries(Object.entries(filters).filter(([, v]) => v != null && v !== ''))
     ).toString();
     try {
-      const [status, incomeRange, yoy, funnel, distributions, indicators] = await Promise.all([
+      const [status, incomeRange, yoy, distributions, indicators, placementRate, outcomeFunnel, incomeByYear] = await Promise.all([
         axios.get(`/api/livelihood/placement/status?${query}`),
         axios.get(`/api/livelihood/placement/income_range?${query}`),
         axios.get(`/api/livelihood/placement/yoy_income?${query}`),
-        axios.get(`/api/livelihood/placement/funnel?${query}`),
         axios.get(`/api/livelihood/placement/distributions?${query}`),
-        axios.get(`/api/livelihood/placement/indicators?${query}`)
+        axios.get(`/api/livelihood/placement/indicators?${query}`),
+        axios.get(`/api/livelihood/decisions/placement-rate?${query}`).catch(() => ({ data: { status: 'no_data' } })),
+        axios.get(`/api/livelihood/decisions/funnel?${query}`).catch(() => ({ data: { status: 'no_data' } })),
+        axios.get(`/api/livelihood/decisions/income-by-year?${query}`).catch(() => ({ data: { status: 'no_data' } }))
       ]);
       setData({
         status: status.data,
         incomeRange: incomeRange.data,
         yoy: yoy.data,
-        funnel: funnel.data,
         distributions: distributions.data,
-        indicators: indicators.data
+        indicators: indicators.data,
+        placementRate: placementRate.data,
+        outcomeFunnel: outcomeFunnel.data,
+        incomeByYear: incomeByYear.data
       });
     } catch (err) {
       console.error('Placement data load failed', err);
@@ -109,10 +113,10 @@ export default function PlacementPage() {
                 note={`${formatPercent(data.indicators.placed_pct)} of all candidates`}
               />
               <Indicator
-                value={formatPercent(data.indicators.placed_pct)}
+                value={formatPercent(data.placementRate?.eligible_pct)}
                 title="Placement Rate"
-                text="Placed candidates ÷ placement-eligible candidates × 100"
-                note="Placed ÷ all candidates on the M&E sheet. Not yet adjusted for placement eligibility."
+                text={`Placed ÷ all candidates: ${formatPercent(data.placementRate?.overall_pct)}`}
+                note={`Placement-eligible = completed training and available for or seeking employment (Working, Self employment, Job searching). Excludes ongoing course, further study and homemaker. n eligible = ${formatCount(data.placementRate?.eligible)}.`}
               />
               <Indicator
                 value={formatPercent(data.indicators.self_pct)}
@@ -150,10 +154,10 @@ export default function PlacementPage() {
                 note="Employers named in the placement-status field; there is no separate employer field yet."
               />
               <Indicator
-                value={formatPercent(data.indicators.female_rate)}
+                value={formatPercent(data.placementRate?.female_pct)}
                 title="Female Placement Rate"
                 text="Placement rate among female candidates"
-                note={`Male ${formatPercent(data.indicators.male_rate)} (${formatCount(data.indicators.men_placed)}/${formatCount(data.indicators.men)})`}
+                note={`Male ${formatPercent(data.placementRate?.male_pct)} (${formatCount(data.placementRate?.men_placed)}/${formatCount(data.placementRate?.men_eligible)}) on the same placement-eligible basis.`}
               />
             </div>
           )}
@@ -274,14 +278,28 @@ export default function PlacementPage() {
           )}
 
           <div className="card" style={{ marginTop: '24px' }}>
-            <div className="card-header"><h3>Skilling → placement → income</h3></div>
+            <div className="card-header"><h3>Enrolled → Trained → Placed/Self-employed → Earning</h3></div>
             <div className="card-body">
               <FilterTags allYears />
               <FunnelBars
-                stages={data.funnel?.stages || []}
-                caption="Roster, monitored, and working ignore the year filter. The last bar follows the selected year: field-sheet rows with post_income > 0, not monitor income."
-                onBarClick={(stage) => handleDrilldown('funnel', stage?.key)}
+                stages={data.outcomeFunnel?.stages || []}
+                caption="M&E field sheet. Earning = placed candidates with a recorded post-training income above zero."
+                onBarClick={(stage) => setModal({
+                  isOpen: true,
+                  title: stage?.label || 'Funnel',
+                  apiUrl: '/api/livelihood/decisions/funnel-rows',
+                  params: { ...filters, stage: stage?.key || '' }
+                })}
               />
+              <div>
+                {(data.outcomeFunnel?.stages || []).map((stage) => (
+                  <p key={stage.key} className="chart-caption">
+                    {stage.label}: {formatCount(stage.value)}
+                    {stage.pct_of_enrolled == null ? '' : ` · ${formatPercent(stage.pct_of_enrolled)} of Enrolled`}
+                    {stage.pct_of_previous == null ? '' : ` · ${formatPercent(stage.pct_of_previous)} of the previous stage`}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -323,18 +341,37 @@ export default function PlacementPage() {
           </div>
 
           <div className="card" style={{ marginTop: '24px' }}>
-            <div className="card-header"><h3>Median post-training income by year</h3></div>
+            <div className="card-header"><h3>Average Monthly Post-Training Income by Year</h3></div>
             <div className="card-body">
               <FilterTags allYears />
-              <p className="chart-caption">Median of recorded post income. Zero and blank values are left out. The bars are the candidates counted in that median.</p>
+              <p className="chart-caption">All years. Average of candidates with a recorded post-training income (n per year shown). Zero and blank values are left out.</p>
               <EChart
-                option={comboLineBarOption((data.yoy || []).map((r) => r.year), {
-                  bar: (data.yoy || []).map((r) => Number(r.count) || 0),
-                  line: (data.yoy || []).map((r) => Number(r.median_income) || 0),
-                  barName: 'Candidates with a recorded post income',
-                  lineName: 'Median post income (₹)',
-                  dualAxis: true
-                })}
+                option={{
+                  ...groupedBarOption(
+                    (data.incomeByYear?.years || []).map((row) => row.year),
+                    [{ label: 'Average monthly income', data: (data.incomeByYear?.years || []).map((row) => row.mean) }],
+                    {
+                      showLabels: true,
+                      legend: false,
+                      yName: 'Average monthly income (₹)',
+                      labelTexts: (data.incomeByYear?.years || []).map((row) => `n = ${formatCount(row.n)}`)
+                    }
+                  ),
+                  tooltip: {
+                    trigger: 'axis',
+                    renderMode: 'richText',
+                    formatter: (items) => {
+                      const item = Array.isArray(items) ? items[0] : items;
+                      const row = (data.incomeByYear?.years || []).find((year) => year.year === item?.name) || {};
+                      return [
+                        item?.name,
+                        `Average ${formatINRFull(row.mean)}`,
+                        `Median ${formatINRFull(row.median)}`,
+                        `n = ${formatCount(row.n)}`
+                      ].join('\n');
+                    }
+                  }
+                }}
                 onPoint={(p) => p.name && handleDrilldown('placement_year', p.name)}
               />
             </div>

@@ -111,7 +111,7 @@ export async function getOverview(filters, user) {
       { label: 'Skill roster', value: result.livelihood_roster },
       { label: 'Skilling sheet', value: result.skilling_sheet },
       { label: 'Enterprise members', value: result.enterprise_members },
-      { label: 'Didi ki dukan', value: result.didi_people },
+      { label: 'Didi ki Dukan', value: result.didi_people },
       { label: 'Jubifarm farmers', value: result.farmers },
       { label: 'HP WOW (school skilling)', value: hpWowStudents }
     ].filter((r) => r.value > 0);

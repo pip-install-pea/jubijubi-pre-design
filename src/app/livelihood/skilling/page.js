@@ -171,6 +171,10 @@ export default function SkillingPage() {
       } catch {
         mixSkilling = { data: { status: 'no_data' } };
       }
+      const [traineeAges, programmeGender] = await Promise.all([
+        axios.get(`/api/livelihood/decisions/age?${query}`).catch(() => ({ data: { status: 'no_data' } })),
+        axios.get(`/api/livelihood/decisions/gender?${query}`).catch(() => ({ data: { status: 'no_data' } }))
+      ]);
       try {
         hpWow = await axios.get(`/api/livelihood/mixprogram/hpwow?${query}`);
       } catch {
@@ -184,6 +188,8 @@ export default function SkillingPage() {
         sessionsByTrade: sessions.data,
         benchmarks: benchmarks.data,
         mixSkilling: mixSkilling.data,
+        traineeAges: traineeAges.data,
+        programmeGender: programmeGender.data,
         hpWow: hpWow.data
       });
     } catch (err) {
@@ -205,6 +211,15 @@ export default function SkillingPage() {
     ? 'Months use the record date. Unparseable dates are left out.'
     : null;
   const grain = data?.benchmarks?.grain === 'district' ? 'district' : 'state';
+
+  const openDecision = (title, apiUrl, extraParams = {}) => {
+    setModal({
+      isOpen: true,
+      title,
+      apiUrl,
+      params: { ...filters, ...extraParams }
+    });
+  };
 
   const handleDrilldown = (type, value = null, extraParams = {}, event) => {
     if (type === 'mix_course') {
@@ -250,13 +265,6 @@ export default function SkillingPage() {
     label: row.status,
     value: Number(row.count) || 0
   })), MIN_SHARE);
-  const ageShare = groupBelowShare(
-    Object.entries(data?.demographics?.age_brackets || {}).map(([label, value]) => ({
-      label,
-      value: Number(value) || 0
-    })),
-    MIN_SHARE
-  );
   const womenRow = data?.demographics?.gender_breakdown?.find(g => g.gender === 'Female' || g.gender === 'F');
   const womenCount = Number(womenRow?.count) || 0;
   const womenPct = roster > 0 ? ((womenCount / roster) * 100).toFixed(1) : null;
@@ -472,18 +480,63 @@ export default function SkillingPage() {
               </div>
             </div>
           </div>
+          {(data?.programmeGender?.bars || []).length > 0 && (
+            <div className="card">
+              <div className="card-header"><h3>Gender ratio – programme-wise</h3></div>
+              <div className="card-body">
+                <p className="chart-caption">
+                  Each bar is 100% of that programme. The skill roster is all years because it has no financial-year field. Didi ki Dukan follows the year filter and not the month filter.
+                  {' '}{(data.programmeGender.excluded || []).join(' ')}
+                </p>
+                <EChart
+                  option={stackedBarOption(
+                    data.programmeGender.bars.map((bar) => bar.label),
+                    [
+                      { label: 'Female', data: data.programmeGender.bars.map((bar) => bar.female), color: '#be185d' },
+                      { label: 'Male', data: data.programmeGender.bars.map((bar) => bar.male), color: '#1d4ed8' },
+                      { label: 'Others', data: data.programmeGender.bars.map((bar) => bar.others), color: '#0f766e' },
+                      { label: 'Not recorded', data: data.programmeGender.bars.map((bar) => bar.not_recorded), color: '#94a3b8' }
+                    ],
+                    { horizontal: true, percentStack: true, segmentLabels: true, gridLeft: 200 }
+                  )}
+                  height={Math.max(220, data.programmeGender.bars.length * 72)}
+                  onPoint={(point) => {
+                    const bar = data.programmeGender.bars.find((item) => item.label === point.name);
+                    if (!bar || !point.seriesName) return;
+                    if (bar.key === 'didi') {
+                      handleDrilldown('mix_didi_gender', point.seriesName);
+                      return;
+                    }
+                    openDecision(`${bar.label}: ${point.seriesName}`, '/api/livelihood/decisions/gender-split', {
+                      programme: bar.key,
+                      gender: point.seriesName
+                    });
+                  }}
+                />
+              </div>
+            </div>
+          )}
           <div className="card">
-            <div className="card-header"><h3>Age brackets · roster</h3></div>
+            <div className="card-header"><h3>Age bracket of all trainees</h3></div>
             <div className="card-body">
               <FilterTags allYears />
-              <p className="kpi-caption">Skill-tracking app</p>
-              <p className="chart-caption">Age brackets on the skill roster. Brackets under 2% are grouped as Others. {rosterMonthNote}</p>
+              <p className="kpi-caption">Skill-tracking app · n = {formatCount(data?.traineeAges?.total)}</p>
+              <p className="chart-caption">
+                All years. The skill roster has no financial-year field, so this card does not follow the year filter.
+                {' '}{rosterMonthNote}
+                {data?.traineeAges?.trade_drill
+                  ? ''
+                  : ' A bracket does not open a trade split because fewer than 90% of trainees with an age join to a trade.'}
+              </p>
               <ColumnBar
-                labels={ageShare.map((row) => row.label)}
-                values={ageShare.map((row) => row.value)}
+                labels={(data?.traineeAges?.brackets || []).map((row) => row.label)}
+                values={(data?.traineeAges?.brackets || []).map((row) => row.value)}
                 onBarClick={(label) => {
-                  const row = ageShare.find((item) => item.label === label);
-                  handleDrilldown('age', label, memberParams(row));
+                  if (data?.traineeAges?.trade_drill) {
+                    openDecision(label, '/api/livelihood/decisions/age-trades', { band: label });
+                    return;
+                  }
+                  handleDrilldown('age', label);
                 }}
               />
             </div>

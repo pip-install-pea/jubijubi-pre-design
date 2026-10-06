@@ -252,7 +252,7 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, seriesPercent = false, rotateLabels = false, percentBase = 0, gridLeft = 0, colors = [] } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, seriesPercent = false, rotateLabels = false, percentBase = 0, gridLeft = 0, colors = [], labelTexts = null } = {}) {
   const total = (datasets || []).reduce((sum, ds) => sum + (ds.data || []).reduce((inner, n) => inner + (Number(n) || 0), 0), 0);
   const seriesTotals = (datasets || []).map((ds) => (ds.data || []).reduce((sum, n) => sum + (Number(n) || 0), 0));
   return {
@@ -280,6 +280,7 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
           show: true,
           position: horizontal ? 'right' : 'top',
           formatter: (p) => {
+            if (Array.isArray(labelTexts)) return labelTexts[p.dataIndex] || '';
             const raw = p.value && typeof p.value === 'object' ? p.value.value : p.value;
             const n = Number(raw);
             if (!Number.isFinite(n)) return '';
@@ -299,10 +300,26 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
   };
 }
 
-export function stackedBarOption(labels, datasets, { horizontal = false, rotateLabels = false, pctLabels = false, tooltipPercent = false } = {}) {
+export function stackedBarOption(labels, datasets, {
+  horizontal = false,
+  percentStack = false,
+  segmentLabels = false,
+  gridLeft = 0,
+  rotateLabels = false,
+  pctLabels = false,
+  tooltipPercent = false
+} = {}) {
   const totals = (labels || []).map((_, index) =>
     (datasets || []).reduce((sum, ds) => sum + (Number(ds.data?.[index]) || 0), 0)
   );
+  const seriesData = (ds) => {
+    if (!percentStack) return ds.data;
+    return (ds.data || []).map((value, index) => {
+      const count = Number(value) || 0;
+      const total = totals[index] || 0;
+      return { value: total ? (count / total) * 100 : 0, count };
+    });
+  };
   const categoryAxis = {
     type: 'category',
     data: labels,
@@ -311,23 +328,30 @@ export function stackedBarOption(labels, datasets, { horizontal = false, rotateL
       : { rotate: (labels || []).length > 6 ? 30 : 0 }
   };
   return {
-    tooltip: tooltipPercent ? {
+    tooltip: (percentStack || tooltipPercent) ? {
       trigger: 'axis',
       renderMode: 'richText',
       formatter: (params) => {
         const rows = Array.isArray(params) ? params : [params];
-        const bandTotal = rows.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
-        const lines = rows.map((row) => {
-          const value = Number(row.value) || 0;
-          const pct = bandTotal ? ((value / bandTotal) * 100).toFixed(1) : '0.0';
-          return `${row.seriesName}: ${value.toLocaleString('en-IN')} (${pct}%)`;
-        });
+        const lines = percentStack
+          ? rows.map((row) => {
+            const count = row.data && typeof row.data === 'object' ? Number(row.data.count) || 0 : Number(row.value) || 0;
+            const pct = Number(row.value);
+            const shown = Number.isFinite(pct) ? pct.toFixed(1) : '0.0';
+            return `${row.seriesName}: ${count.toLocaleString('en-IN')} (${shown}%)`;
+          })
+          : rows.map((row) => {
+            const bandTotal = rows.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+            const value = Number(row.value) || 0;
+            const pct = bandTotal ? ((value / bandTotal) * 100).toFixed(1) : '0.0';
+            return `${row.seriesName}: ${value.toLocaleString('en-IN')} (${pct}%)`;
+          });
         return [rows[0]?.axisValue || '', ...lines].filter(Boolean).join('\n');
       }
     } : { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: { bottom: 0 },
     grid: {
-      left: 8,
+      left: gridLeft || 8,
       right: 16,
       top: pctLabels ? 36 : 24,
       bottom: rotateLabels ? 140 : 48,
@@ -335,7 +359,7 @@ export function stackedBarOption(labels, datasets, { horizontal = false, rotateL
       outerBoundsContain: 'axisLabel'
     },
     xAxis: horizontal
-      ? { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
+      ? { type: 'value', max: percentStack ? 100 : undefined, axisLabel: { formatter: (v) => percentStack ? `${v}%` : Number(v).toLocaleString('en-IN') } }
       : categoryAxis,
     yAxis: horizontal
       ? {
@@ -343,23 +367,37 @@ export function stackedBarOption(labels, datasets, { horizontal = false, rotateL
           data: labels,
           ...(rotateLabels ? { axisLabel: { rotate: 90, interval: 0 } } : {})
         }
-      : { type: 'value', axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
+      : { type: 'value', max: percentStack ? 100 : undefined, axisLabel: { formatter: (v) => percentStack ? `${v}%` : Number(v).toLocaleString('en-IN') } },
     series: (datasets || []).map((ds) => ({
       type: 'bar',
       name: ds.label,
       stack: 'total',
       emphasis: { focus: 'series' },
-      data: ds.data,
-      label: pctLabels ? {
-        show: true,
-        formatter: (point) => {
-          const value = Number(point.value) || 0;
-          if (!value) return '';
-          const total = totals[point.dataIndex] || 0;
-          const pct = total ? ((value / total) * 100).toFixed(1) : '0.0';
-          return `${value.toLocaleString('en-IN')}\n${pct}%`;
+      data: seriesData(ds),
+      ...(ds.color ? { itemStyle: { color: ds.color } } : {}),
+      ...(segmentLabels ? {
+        label: {
+          show: true,
+          formatter: (point) => {
+            const count = point.data && typeof point.data === 'object' ? Number(point.data.count) || 0 : Number(point.value) || 0;
+            if (!count) return '';
+            const total = totals[point.dataIndex] || 0;
+            const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+            return `${count.toLocaleString('en-IN')} (${pct}%)`;
+          }
         }
-      } : undefined
+      } : pctLabels ? {
+        label: {
+          show: true,
+          formatter: (point) => {
+            const value = Number(point.value) || 0;
+            if (!value) return '';
+            const total = totals[point.dataIndex] || 0;
+            const pct = total ? ((value / total) * 100).toFixed(1) : '0.0';
+            return `${value.toLocaleString('en-IN')}\n${pct}%`;
+          }
+        }
+      } : {})
     }))
   };
 }
