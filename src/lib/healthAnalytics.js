@@ -1,5 +1,6 @@
 import { fetchall, scalar, isDatabaseConfigured } from './db.js';
 import { bindIn, buildFilters, splitList, whereStr, validDateClause, stripDistrict, stripGeo, withPeerAverages, mean } from './analytics.js';
+import { foldSql } from './labelNorm.js';
 import { postPhpEnvelope } from './phpClient.js';
 import { API_BASE, DEFAULT_YEAR, SYMPTOM_PATHS } from './phpRegistry.js';
 
@@ -737,4 +738,120 @@ export async function getHealthGeoBenchmarks(filters) {
     console.warn('[healthAnalytics] geo benchmarks skipped:', err.message);
     return empty;
   }
+}
+
+function profilePatientFilter(filters) {
+  return buildFilters(healthFilters(filters), {
+    date_col: 'p.created_at',
+    state_col: 'p.state_id',
+    district_col: 'p.district_id',
+    partner_col: 'p.partner_id',
+    gender_col: 'p.gender',
+    ...GEO
+  });
+}
+
+export async function listHealthVillages(filters) {
+  if (!isDatabaseConfigured()) return [];
+  const { clauses, params } = profilePatientFilter(filters);
+  return safeFetchall(
+    `SELECT COALESCE(NULLIF(btrim(v.name), ''), 'Village not recorded') AS village,
+            COUNT(*)::integer AS patients
+     FROM health_profile_patients p
+     LEFT JOIN health_village v ON v.source_id::text = p.village_id::text
+     ${whereStr(clauses)}
+     GROUP BY COALESCE(v.source_id::text, ''), COALESCE(NULLIF(btrim(v.name), ''), 'Village not recorded')
+     ORDER BY patients DESC`,
+    params
+  );
+}
+
+export async function listHealthDoctors(filters) {
+  const empty = { doctors: 0, doctors_follow_geo: false, rows: [] };
+  if (!isDatabaseConfigured()) return empty;
+  const fill = await safeFetchall(
+    `SELECT COUNT(*)::integer AS active,
+            COUNT(*) FILTER (WHERE NULLIF(btrim(state_id::text), '') IS NOT NULL)::integer AS with_state
+     FROM health_profile_doctors
+     WHERE del_action = 'N'`
+  );
+  const active = Number(fill[0]?.active) || 0;
+  const withState = Number(fill[0]?.with_state) || 0;
+  const doctorsFollowGeo = active > 0 && withState / active >= 0.95;
+  const doctorClauses = [`d.del_action = 'N'`];
+  const doctorParams = {};
+  if (doctorsFollowGeo) {
+    const built = buildFilters(filters, {
+      state_col: 'd.state_id',
+      district_col: 'd.district_id',
+      ...GEO
+    });
+    doctorClauses.push(...built.clauses);
+    Object.assign(doctorParams, built.params);
+  }
+  const where = whereStr(doctorClauses);
+  const doctors = await safeScalar(
+    `SELECT COUNT(DISTINCT ${foldSql('d.doctor_name')})::integer
+     FROM health_profile_doctors d
+     ${where}`,
+    doctorParams
+  );
+  const rows = await safeFetchall(
+    `SELECT COALESCE(NULLIF(btrim(hp.name), ''), 'Partner not recorded') AS partner,
+            COALESCE(NULLIF(btrim(d.specialization), ''), 'Specialization not recorded') AS specialization,
+            COUNT(DISTINCT ${foldSql('d.doctor_name')})::integer AS doctors
+     FROM health_profile_doctors d
+     LEFT JOIN health_partner hp ON hp.source_id::text = d.partner_id::text
+     ${where}
+     GROUP BY 1, 2
+     ORDER BY doctors DESC`,
+    doctorParams
+  );
+  return {
+    doctors: Number(doctors) || 0,
+    doctors_follow_geo: doctorsFollowGeo,
+    rows
+  };
+}
+
+export async function getHealthService(filters) {
+  const empty = {
+    districts: 0,
+    pregnant_women: 0,
+    doctors: 0,
+    doctors_follow_geo: false,
+    top_villages: [],
+    other_villages: 0,
+    other_village_patients: 0,
+    village_patient_total: 0
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const { clauses, params } = profilePatientFilter(filters);
+  const profile = await safeFetchall(
+    `SELECT COUNT(DISTINCT NULLIF(btrim(p.district_id::text), ''))::integer AS districts,
+            COUNT(*) FILTER (WHERE p.female_is_pregnant = 'Y')::integer AS pregnant
+     FROM health_profile_patients p
+     ${whereStr(clauses)}`,
+    params
+  );
+  const [villages, doctorList] = await Promise.all([
+    listHealthVillages(filters),
+    listHealthDoctors(filters)
+  ]);
+  const top = villages.slice(0, 15).map((row) => ({
+    label: row.village,
+    value: Number(row.patients) || 0
+  }));
+  const rest = villages.slice(15);
+  return {
+    districts: Number(profile[0]?.districts) || 0,
+    pregnant_women: Number(profile[0]?.pregnant) || 0,
+    doctors: doctorList.doctors,
+    doctors_follow_geo: doctorList.doctors_follow_geo,
+    top_villages: top,
+    other_villages: rest.length,
+    other_village_patients: rest.reduce((sum, row) => sum + (Number(row.patients) || 0), 0),
+    village_patient_total: villages.reduce((sum, row) => sum + (Number(row.patients) || 0), 0)
+  };
 }
