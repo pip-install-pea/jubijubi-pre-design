@@ -225,7 +225,7 @@ export default function EducationPage() {
               <div className="card-body">
                 <div className="card-row">
                   <div className="card" style={{ flex: 1 }}>
-                    <div className="card-header"><h3>Students by programme</h3></div>
+                    <div className="card-header"><h3>Program wise students</h3></div>
                     <div className="card-body">
                       <EChart
                         option={treemapOption(mixByProgram.map((r) => ({ label: r.label, value: r.students })), { name: 'Students' })}
@@ -254,7 +254,7 @@ export default function EducationPage() {
                 </div>
                 {mixSunburst.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location to programme</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Statewise programs</h3>
                     <EChart
                       option={sunburstOption(mixSunburst)}
                       height={380}
@@ -269,7 +269,7 @@ export default function EducationPage() {
                 )}
                 {mixProgramLocs.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Top locations in each programme</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Location wise Program</h3>
                     <div className="program-loc-grid">
                       {mixProgramLocs.map((block) => (
                         <div key={block.program} className="program-loc-card">
@@ -293,7 +293,7 @@ export default function EducationPage() {
                 )}
                 {mixCaste.length > 0 && (
                   <div style={{ marginTop: '16px' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Caste categories</h3>
+                    <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px' }}>Category</h3>
                     <EChart
                       option={roseOption(mixCaste)}
                       onPoint={(p) => p.name && handleDrilldown('mix_caste', p.name)}
