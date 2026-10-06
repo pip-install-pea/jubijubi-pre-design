@@ -58,6 +58,29 @@ export function bindIn(column, value, prefix, params) {
   return `${column} IN (${list.map((_, index) => `:${prefix}_${index}`).join(', ')})`;
 }
 
+const CALENDAR_MONTHS = [
+  ['01', 'january', 'jan'],
+  ['02', 'february', 'feb'],
+  ['03', 'march', 'mar'],
+  ['04', 'april', 'apr'],
+  ['05', 'may'],
+  ['06', 'june', 'jun'],
+  ['07', 'july', 'jul'],
+  ['08', 'august', 'aug'],
+  ['09', 'september', 'sep', 'sept'],
+  ['10', 'october', 'oct'],
+  ['11', 'november', 'nov'],
+  ['12', 'december', 'dec']
+];
+
+export function calendarMonthNumbers(monthValue) {
+  const wanted = new Set(String(monthValue || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean));
+  if (!wanted.size) return [];
+  return CALENDAR_MONTHS
+    .filter((names) => names.some((name) => wanted.has(name) || wanted.has(String(Number(names[0])))))
+    .map((names) => names[0]);
+}
+
 export function buildFilters(filters, options = {}) {
   const {
     date_col = null,
@@ -102,6 +125,26 @@ export function buildFilters(filters, options = {}) {
   const yearClause = date_col ? bindIn(`SUBSTR(${date_col}::text, 1, 4)`, year, 'year', params) : null;
   for (const clause of [stateClause, districtClause, partnerClause, genderClause, tradeClause, schoolClause, academicClause, financialClause, yearClause]) {
     if (clause) clauses.push(clause);
+  }
+  if (date_col && filters?.half) {
+    const halfMap = { H1: ['01', '06'], H2: ['07', '12'] };
+    const span = halfMap[String(filters.half).toUpperCase()];
+    if (span) {
+      clauses.push(`SUBSTR(${date_col}::text, 6, 2) BETWEEN :half_start AND :half_end`);
+      params.half_start = span[0];
+      params.half_end = span[1];
+    }
+  }
+  if (date_col && options.calendar_month && filters?.month) {
+    const monthNums = calendarMonthNumbers(filters.month);
+    if (monthNums.length) {
+      const keys = monthNums.map((num, index) => {
+        const key = `cal_month_${index}`;
+        params[key] = num;
+        return `:${key}`;
+      });
+      clauses.push(`SUBSTR(${date_col}::text, 6, 2) IN (${keys.join(', ')})`);
+    }
   }
   if (date_col && quarter) {
     const quarter_map = {

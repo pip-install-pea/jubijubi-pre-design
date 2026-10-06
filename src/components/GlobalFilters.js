@@ -76,7 +76,8 @@ function payloadFor(mod, filters) {
       state_id: filters.state_id,
       district_id: filters.district_id,
       year: filters.year,
-      gender: filters.gender
+      gender: filters.gender,
+      month: filters.month || ''
     };
   }
   if (mod === 'education') {
@@ -136,7 +137,7 @@ function readUrl(searchParams, mod) {
     next.financial_year = clock;
   }
   const month = searchParams.get('month');
-  if (month && (mod === 'livelihood' || mod === 'education')) next.month = month;
+  if (month && (mod === 'livelihood' || mod === 'education' || mod === 'health')) next.month = month;
   return next;
 }
 
@@ -429,6 +430,17 @@ export default function GlobalFilters({ onApply }) {
                 value={filters.financial_year || filters.academic_year}
                 options={fyYears.map((fy) => ({ id: fy, name: fy }))}
                 emptyLabel="All years"
+                onChange={setField}
+              />
+            )}
+
+            {moduleName === 'health' && (
+              <MultiSelect
+                label="Month"
+                name="month"
+                value={filters.month}
+                options={['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((name) => ({ id: name, name }))}
+                emptyLabel="All months"
                 onChange={setField}
               />
             )}

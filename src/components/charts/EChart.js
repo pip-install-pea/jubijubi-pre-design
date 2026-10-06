@@ -252,15 +252,16 @@ export function lineAreaOption(labels, values, { name = '', rupee = false } = {}
   };
 }
 
-export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, gridLeft = 0, colors = [] } = {}) {
+export function groupedBarOption(labels, datasets, { horizontal = false, showLabels = false, legend = true, yName = '', withPercent = false, seriesPercent = false, rotateLabels = false, percentBase = 0, gridLeft = 0, colors = [] } = {}) {
   const total = (datasets || []).reduce((sum, ds) => sum + (ds.data || []).reduce((inner, n) => inner + (Number(n) || 0), 0), 0);
+  const seriesTotals = (datasets || []).map((ds) => (ds.data || []).reduce((sum, n) => sum + (Number(n) || 0), 0));
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: legend ? { bottom: 0 } : { show: false },
-    grid: { left: gridLeft || (yName ? 48 : 8), right: withPercent ? 88 : 16, top: showLabels ? 28 : 24, bottom: legend ? 48 : 28, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    grid: { left: gridLeft || (yName ? 48 : 8), right: withPercent ? 88 : 16, top: showLabels ? 28 : 24, bottom: rotateLabels ? 120 : (legend ? 48 : 28), outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
     xAxis: horizontal
       ? { type: 'value', name: yName || undefined, nameLocation: 'middle', nameGap: 36, axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } }
-      : { type: 'category', data: labels, axisLabel: { rotate: labels.length > 6 ? 30 : 0 } },
+      : { type: 'category', data: labels, axisLabel: rotateLabels ? { rotate: 90, interval: 0 } : { rotate: labels.length > 6 ? 30 : 0 } },
     yAxis: horizontal
       ? { type: 'category', data: labels }
       : { type: 'value', name: yName || undefined, nameLocation: 'middle', nameGap: 36, axisLabel: { formatter: (v) => Number(v).toLocaleString('en-IN') } },
@@ -283,8 +284,14 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
             const n = Number(raw);
             if (!Number.isFinite(n)) return '';
             const count = n.toLocaleString('en-IN');
-            if (!withPercent || !total) return count;
-            return `${count} (${((n / total) * 100).toFixed(1)}%)`;
+            if (seriesPercent) {
+              const base = Number(datasets[p.seriesIndex]?.percentBase);
+              const seriesTotal = Number.isFinite(base) && base > 0 ? base : (seriesTotals[p.seriesIndex] || 0);
+              return seriesTotal ? `${((n / seriesTotal) * 100).toFixed(1)}%` : '';
+            }
+            const base = Number(percentBase) > 0 ? Number(percentBase) : total;
+            if (!withPercent || !base) return count;
+            return `${count} (${((n / base) * 100).toFixed(1)}%)`;
           }
         }
       } : {})
@@ -292,7 +299,7 @@ export function groupedBarOption(labels, datasets, { horizontal = false, showLab
   };
 }
 
-export function stackedBarOption(labels, datasets, { horizontal = false, rotateLabels = false, pctLabels = false } = {}) {
+export function stackedBarOption(labels, datasets, { horizontal = false, rotateLabels = false, pctLabels = false, tooltipPercent = false } = {}) {
   const totals = (labels || []).map((_, index) =>
     (datasets || []).reduce((sum, ds) => sum + (Number(ds.data?.[index]) || 0), 0)
   );
@@ -304,7 +311,20 @@ export function stackedBarOption(labels, datasets, { horizontal = false, rotateL
       : { rotate: (labels || []).length > 6 ? 30 : 0 }
   };
   return {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
+    tooltip: tooltipPercent ? {
+      trigger: 'axis',
+      renderMode: 'richText',
+      formatter: (params) => {
+        const rows = Array.isArray(params) ? params : [params];
+        const bandTotal = rows.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+        const lines = rows.map((row) => {
+          const value = Number(row.value) || 0;
+          const pct = bandTotal ? ((value / bandTotal) * 100).toFixed(1) : '0.0';
+          return `${row.seriesName}: ${value.toLocaleString('en-IN')} (${pct}%)`;
+        });
+        return [rows[0]?.axisValue || '', ...lines].filter(Boolean).join('\n');
+      }
+    } : { trigger: 'axis', axisPointer: { type: 'shadow' }, renderMode: 'richText' },
     legend: { bottom: 0 },
     grid: {
       left: 8,
