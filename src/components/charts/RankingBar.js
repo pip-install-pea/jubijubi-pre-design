@@ -2,10 +2,10 @@
 
 import React, { useMemo } from 'react';
 import EChart, { groupedBarOption, comboLineBarOption } from './EChart';
-import { hasValues } from '../../lib/chartTheme';
+import { groupBelowShare, hasValues } from '../../lib/chartTheme';
 import ChartEmpty from './ChartEmpty';
 
-function rankItems(items, maxItems) {
+function rankItems(items, maxItems, minShare) {
   const source = (items || []).map((it) => ({
     label: String(it.label ?? it.name ?? it.disease ?? it.trade ?? it.program ?? it.symptom ?? 'Unknown'),
     value: Number(it.value ?? it.count ?? it.patients ?? it.students ?? it.batches ?? 0)
@@ -13,6 +13,7 @@ function rankItems(items, maxItems) {
 
   const grandTotal = source.reduce((s, r) => s + r.value, 0);
   const sorted = [...source].sort((a, b) => b.value - a.value);
+  if (minShare) return { ranked: groupBelowShare(sorted, minShare), grandTotal };
   const ranked = !maxItems || sorted.length <= maxItems
     ? sorted
     : [
@@ -32,9 +33,10 @@ export default function RankingBar({
   pareto = false,
   percent = false,
   colors = [],
-  focus = []
+  focus = [],
+  minShare = 0
 }) {
-  const { ranked, grandTotal } = useMemo(() => rankItems(items, maxItems), [items, maxItems]);
+  const { ranked, grandTotal } = useMemo(() => rankItems(items, maxItems, minShare), [items, maxItems, minShare]);
   const labels = ranked.map((r) => r.label);
   const values = ranked.map((r) => r.value);
 
@@ -79,7 +81,7 @@ export default function RankingBar({
         onPoint={onBarClick
           ? (p) => {
             const n = Array.isArray(p.value) ? p.value[0] : p.value;
-            onBarClick(p.name, Number(n) || 0, p.dataIndex, p.nativeEvent);
+            onBarClick(p.name, Number(n) || 0, p.dataIndex, p.nativeEvent, ranked[p.dataIndex]);
           }
           : undefined}
       />

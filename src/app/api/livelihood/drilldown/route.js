@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
-import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
+import { getFiltersFromRequest, bindIn, buildFilters, whereStr } from '@/lib/analytics.js';
 import { fetchall, scalar } from '@/lib/db.js';
 import { placementWindowCte, mixWorkingSql, placementStatusSql, genderBucketSql, phaseLabelSql, validIncomeSql, incomeDeltaSql, monthFilterSql } from '@/lib/livelihoodAnalytics.js';
 import { queryMixRows } from '@/lib/mixDrilldown.js';
@@ -16,8 +16,12 @@ import {
   resolveGeoId
 } from '@/lib/geoLookups.js';
 
+function memberList(searchParams) {
+  return String(searchParams.get('members') || '').split('\u001e').map((item) => item.trim()).filter(Boolean);
+}
+
 function livelihoodFilters(filters, options) {
-  const built = livelihoodFilters(filters, options);
+  const built = buildFilters(filters, options);
   const column = options.date_col;
   if (column && /created_at|date_of_monitor|batch_start_date/.test(column) && !String(column).startsWith('em.')) {
     const clause = monthFilterSql(column, filters, built.params);
@@ -126,11 +130,18 @@ export async function GET(req) {
         district_col: 'sm.district_id',
         date_col: 'sm.date_of_monitor'
       });
-      if (value === 'Not reported' || value === 'Not Reported') {
-        clauses.push("(sm.work_status IS NULL OR btrim(COALESCE(sm.work_status, '')) = '')");
-      } else if (value) {
-        clauses.push("COALESCE(sm.work_status, '') = :drill_value");
-        params.drill_value = value;
+      const statusMembers = memberList(searchParams);
+      const statusLabels = statusMembers.length ? statusMembers : (value ? [value] : []);
+      if (statusLabels.length) {
+        const parts = statusLabels.map((label, index) => {
+          if (label === 'Not reported' || label === 'Not Reported') {
+            return "(sm.work_status IS NULL OR btrim(COALESCE(sm.work_status, '')) = '')";
+          }
+          const key = `ws_mem_${index}`;
+          params[key] = label;
+          return `COALESCE(sm.work_status, '') = :${key}`;
+        });
+        clauses.push(`(${parts.join(' OR ')})`);
       }
       const sliceGender = searchParams.get('slice_gender');
       if (sliceGender) {
@@ -303,7 +314,11 @@ export async function GET(req) {
         district_col: 'sp.district_id',
         date_col: 'sp.created_at'
       });
-      if (value) {
+      const tradeMembers = memberList(searchParams);
+      if (tradeMembers.length) {
+        const clause = bindIn(`COALESCE(ts.stream_name, sp.training_stream_id::text)`, tradeMembers, 'trade_member', params);
+        if (clause) clauses.push(clause);
+      } else if (value) {
         clauses.push("COALESCE(ts.stream_name, sp.training_stream_id) = :drill_value");
         params.drill_value = value;
       }
@@ -418,7 +433,11 @@ export async function GET(req) {
         date_col: 'sp.created_at',
         trade_col: 'sp.training_stream_id'
       });
-      if (value) {
+      const genderMembers = memberList(searchParams);
+      if (genderMembers.length) {
+        const clause = bindIn(genderBucketSql('sp.gender'), genderMembers, 'gender_member', params);
+        if (clause) clauses.push(clause);
+      } else if (value) {
         clauses.push(`${genderBucketSql('sp.gender')} = :drill_value`);
         params.drill_value = value;
       }
@@ -468,17 +487,17 @@ export async function GET(req) {
       });
       
       const ageExpr = `(CAST(EXTRACT(YEAR FROM CURRENT_DATE) AS INTEGER) - CASE WHEN sp.dob ~ '^[0-9]{4}' THEN CAST(SUBSTR(sp.dob, 1, 4) AS INTEGER) ELSE 0 END)`;
-      if (value === '<18') {
-        clauses.push(`${ageExpr} < 18`);
-      } else if (value === '18-25') {
-        clauses.push(`${ageExpr} BETWEEN 18 AND 25`);
-      } else if (value === '26-35') {
-        clauses.push(`${ageExpr} BETWEEN 26 AND 35`);
-      } else if (value === '36-45') {
-        clauses.push(`${ageExpr} BETWEEN 36 AND 45`);
-      } else if (value === '45+') {
-        clauses.push(`${ageExpr} > 45`);
-      }
+      const ageBand = (label) => {
+        if (label === '<18') return `${ageExpr} < 18`;
+        if (label === '18-25') return `${ageExpr} BETWEEN 18 AND 25`;
+        if (label === '26-35') return `${ageExpr} BETWEEN 26 AND 35`;
+        if (label === '36-45') return `${ageExpr} BETWEEN 36 AND 45`;
+        if (label === '45+') return `${ageExpr} > 45`;
+        return null;
+      };
+      const ageLabels = memberList(searchParams);
+      const ageParts = (ageLabels.length ? ageLabels : (value ? [value] : [])).map(ageBand).filter(Boolean);
+      if (ageParts.length) clauses.push(`(${ageParts.join(' OR ')})`);
       
       if (q) {
         clauses.push("(sp.person_name ILIKE :q OR sp.mobile_number ILIKE :q OR sp.person_id::text LIKE :q)");
@@ -1037,22 +1056,34 @@ export async function GET(req) {
           mix_placement: 'placement_status',
           mix_skill_location: 'location'
         }[drillType];
+        const names = memberList(searchParams);
+        const memberParams = {};
+        let memberClause = null;
+        if (names.length && (field === 'course_name' || field === 'location')) {
+          memberClause = `(${names.map((_, index) => eqFold(`m.${field}`, `mem_${index}`)).join(' OR ')})`;
+          names.forEach((name, index) => { memberParams[`mem_${index}`] = name; });
+        } else if (names.length && field === 'person_gender') {
+          memberClause = bindIn(genderBucketSql('m.person_gender'), names, 'mem', memberParams);
+        } else if (names.length && field === 'placement_status') {
+          memberClause = bindIn(placementStatusSql('m.placement_status'), names, 'mem', memberParams);
+        }
         const payload = await queryMixRows({
         searchParams,
           ...mixCommon,
           extraClauses: [
             `m.program_id::text = '11'`,
-            !value
-              ? 'TRUE'
-              : field === 'placement_status'
-                ? `${placementStatusSql('m.placement_status')} = :drill_value`
-                : field === 'person_gender'
-                  ? `${genderBucketSql('m.person_gender')} = :drill_value`
-                  : (field === 'location' || field === 'course_name'
-                    ? eqFold(`m.${field}`, 'drill_value')
-                    : eqSoft(`m.${field}`, 'drill_value'))
+            memberClause
+              || (!value
+                ? 'TRUE'
+                : field === 'placement_status'
+                  ? `${placementStatusSql('m.placement_status')} = :drill_value`
+                  : field === 'person_gender'
+                    ? `${genderBucketSql('m.person_gender')} = :drill_value`
+                    : (field === 'location' || field === 'course_name'
+                      ? eqFold(`m.${field}`, 'drill_value')
+                      : eqSoft(`m.${field}`, 'drill_value')))
           , ...month.clauses],
-          extraParams: { drill_value: value, ...month.params },
+          extraParams: { drill_value: value, ...month.params, ...memberParams },
           qSql: '(m.course_name ILIKE :q OR m.location ILIKE :q)',
           selectSql: `SELECT COALESCE(NULLIF(TRIM(m.course_name), ''), '—') AS course_name,
             COALESCE(NULLIF(TRIM(m.location), ''), '—') AS location,

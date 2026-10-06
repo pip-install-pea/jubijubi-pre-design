@@ -7,7 +7,7 @@ export function useChartFocus() {
 
   const select = useCallback((label, event) => {
     const name = String(label || '').trim();
-    if (!name || name === 'Other') return focus;
+    if (!name || name === 'Other' || name === 'Others') return focus;
     const additive = Boolean(event?.shiftKey || event?.metaKey);
     setFocus((prev) => {
       if (additive) {

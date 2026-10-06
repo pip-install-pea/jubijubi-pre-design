@@ -294,6 +294,34 @@ export function rupeeOptions(extra = {}) {
   };
 }
 
+/** Keep slices at or above minShare. Smaller ones become one Others bar, last. */
+export function groupBelowShare(items, minShare = 0.02, { keepOrder = false } = {}) {
+  const source = (items || []).map((item) => ({
+    ...item,
+    label: String(item.label ?? item.name ?? 'Unknown'),
+    value: Number(item.value) || 0
+  })).filter((row) => row.value > 0);
+  const total = source.reduce((sum, row) => sum + row.value, 0);
+  if (!total) return [];
+  const kept = [];
+  const small = [];
+  for (const row of source) {
+    if (row.value / total < minShare) small.push(row);
+    else kept.push(row);
+  }
+  if (!keepOrder) kept.sort((a, b) => b.value - a.value);
+  if (!small.length) return kept;
+  const tailValue = small.reduce((sum, row) => sum + row.value, 0);
+  const tailMembers = small.map((row) => row.member || row.key || row.label);
+  const existing = kept.find((row) => row.label === 'Others');
+  if (existing) {
+    existing.value += tailValue;
+    existing.members = [existing.member || existing.key || existing.label, ...tailMembers];
+    return kept;
+  }
+  return [...kept, { label: 'Others', value: tailValue, members: tailMembers, color: '#94a3b8' }];
+}
+
 export function bucketTop(items, n = 12) {
   const sorted = [...items].sort((a, b) => (b.value || 0) - (a.value || 0));
   if (sorted.length <= n) return sorted;

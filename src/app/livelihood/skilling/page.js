@@ -34,6 +34,13 @@ import ChartFocusBar from '../../../components/ChartFocusBar';
 import PageRail from '../../../components/PageRail';
 import { useChartFocus } from '../../../hooks/useChartFocus';
 import { formatCount, formatINR, formatINRFull } from '../../../lib/format';
+import { groupBelowShare } from '../../../lib/chartTheme';
+
+const MIN_SHARE = 0.02;
+
+function memberParams(row) {
+  return row?.members?.length ? { members: row.members.join('\u001e') } : {};
+}
 
 const BAR_COLORS = ['#1d4ed8', '#0f766e', '#f97316', '#be185d', '#7c3aed', '#0891b2', '#ca8a04', '#16a34a', '#9333ea', '#dc2626'];
 const INCOME_COLORS = ['#1d4ed8', '#0f766e', '#f97316'];
@@ -212,6 +219,36 @@ export default function SkillingPage() {
 
   const roster = Number(data?.beneficiaries?.roster_count ?? data?.beneficiaries?.total_trained) || 0;
   const outcomes = outcomeChart(data?.beneficiaries?.status_by_district);
+  const courseShare = groupBelowShare((data?.mixSkilling?.by_course || []).map((row) => ({
+    label: row.label,
+    value: Number(row.value) || 0
+  })), MIN_SHARE);
+  const genderSheet = groupBelowShare((data?.mixSkilling?.by_gender || []).map((row) => ({
+    label: row.label,
+    value: Number(row.value) || 0,
+    color: SHEET_GENDER_COLORS[row.label]
+  })), MIN_SHARE);
+  const genderRoster = groupBelowShare((data?.demographics?.gender_breakdown || []).map((row) => ({
+    label: row.gender,
+    value: Number(row.count) || 0
+  })), MIN_SHARE);
+  const careerShare = groupBelowShare(CAREER_STAGES.map((stage) => {
+    const row = (data?.mixSkilling?.by_placement || []).find((item) => item.label === stage.key);
+    return row && Number(row.value) > 0
+      ? { label: stage.label, value: Number(row.value) || 0, key: stage.key, member: stage.key, color: stage.color }
+      : null;
+  }).filter(Boolean), MIN_SHARE, { keepOrder: true });
+  const workShare = groupBelowShare((data?.beneficiaries?.status_breakdown || []).map((row) => ({
+    label: row.status,
+    value: Number(row.count) || 0
+  })), MIN_SHARE);
+  const ageShare = groupBelowShare(
+    Object.entries(data?.demographics?.age_brackets || {}).map(([label, value]) => ({
+      label,
+      value: Number(value) || 0
+    })),
+    MIN_SHARE
+  );
   const womenRow = data?.demographics?.gender_breakdown?.find(g => g.gender === 'Female' || g.gender === 'F');
   const womenCount = Number(womenRow?.count) || 0;
   const womenPct = roster > 0 ? ((womenCount / roster) * 100).toFixed(1) : null;
@@ -286,16 +323,20 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Course-wise enrolment</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">M&E field sheet</p>
-                <p className="chart-caption">Share of candidates on the skilling sheet. All courses are shown. {sheetMonthNote}</p>
+                <p className="chart-caption">Share of candidates on the skilling sheet. Courses under 2% are grouped as Others. {sheetMonthNote}</p>
                 <EChart
                   option={groupedBarOption(
-                    (data.mixSkilling?.by_course || []).map((row) => row.label),
-                    [{ label: 'Candidates', data: (data.mixSkilling?.by_course || []).map((row) => Number(row.value) || 0) }],
+                    courseShare.map((row) => row.label),
+                    [{ label: 'Candidates', data: courseShare.map((row) => row.value) }],
                     { horizontal: true, showLabels: true, legend: false, withPercent: true, gridLeft: 180 }
                   )}
-                  height={Math.max(280, (data.mixSkilling?.by_course || []).length * 28)}
+                  height={Math.max(280, courseShare.length * 28)}
                   focus={focus}
-                  onPoint={(p) => p.name && handleDrilldown('mix_course', p.name, {}, p.nativeEvent)}
+                  onPoint={(p) => {
+                    if (!p.name) return;
+                    const row = courseShare.find((item) => item.label === p.name);
+                    handleDrilldown('mix_course', p.name, memberParams(row), p.nativeEvent);
+                  }}
                 />
               </div>
             </div>
@@ -303,14 +344,15 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Trade-wise candidates</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">Skill-tracking app</p>
-                <p className="chart-caption">Candidates on the skill roster, by trade. All trades are shown. {rosterMonthNote}</p>
+                <p className="chart-caption">Candidates on the skill roster, by trade. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
                   items={(data.byTrade || []).map(r => ({ label: r.trade, value: r.count }))}
                   maxItems={0}
+                  minShare={MIN_SHARE}
                   pareto={false}
                   percent
                   colors={BAR_COLORS}
-                  onBarClick={(label) => handleDrilldown('trade', label)}
+                  onBarClick={(label, _value, _index, _event, row) => handleDrilldown('trade', label, memberParams(row))}
                 />
               </div>
             </div>
@@ -321,10 +363,11 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Trade-wise batches</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">Skill-tracking app</p>
-                <p className="chart-caption">Each bar counts batches, not people. All trades are shown. {rosterMonthNote}</p>
+                <p className="chart-caption">Each bar counts batches, not people. Trades under 2% are grouped as Others. {rosterMonthNote}</p>
                 <RankingBar
                   items={(data.sessionsByTrade?.trades || []).map(r => ({ label: r.trade, value: r.batches }))}
                   maxItems={0}
+                  minShare={MIN_SHARE}
                   percent
                   colors={BAR_COLORS}
                 />
@@ -382,13 +425,16 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Gender-wise portfolio</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">M&E field sheet</p>
-                <p className="chart-caption">Gender recorded on the skilling sheet. {sheetMonthNote}</p>
+                <p className="chart-caption">Gender recorded on the skilling sheet. Slices under 2% are grouped as Others. {sheetMonthNote}</p>
                 <BrandDoughnut
-                  labels={(data.mixSkilling?.by_gender || []).map((row) => row.label)}
-                  values={(data.mixSkilling?.by_gender || []).map((row) => row.value)}
-                  colors={(data.mixSkilling?.by_gender || []).map((row) => SHEET_GENDER_COLORS[row.label])}
+                  labels={genderSheet.map((row) => row.label)}
+                  values={genderSheet.map((row) => row.value)}
+                  colors={genderSheet.map((row) => row.color)}
                   percent
-                  onSliceClick={(label) => handleDrilldown('mix_skill_gender', label)}
+                  onSliceClick={(label) => {
+                    const row = genderSheet.find((item) => item.label === label);
+                    handleDrilldown('mix_skill_gender', label, memberParams(row));
+                  }}
                 />
               </div>
             </div>
@@ -396,12 +442,15 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Gender ratio</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">Skill-tracking app</p>
-                <p className="chart-caption">Gender on the skill roster. Blank gender is shown as Not recorded. {rosterMonthNote}</p>
+                <p className="chart-caption">Gender on the skill roster. Blank gender is included. Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut
-                  labels={data.demographics?.gender_breakdown?.map(r => r.gender) || []}
-                  values={data.demographics?.gender_breakdown?.map(r => r.count) || []}
+                  labels={genderRoster.map((row) => row.label)}
+                  values={genderRoster.map((row) => row.value)}
                   percent
-                  onSliceClick={(label) => handleDrilldown('gender', label)}
+                  onSliceClick={(label) => {
+                    const row = genderRoster.find((item) => item.label === label);
+                    handleDrilldown('gender', label, memberParams(row));
+                  }}
                 />
               </div>
             </div>
@@ -410,11 +459,14 @@ export default function SkillingPage() {
             <div className="card-header"><h3>Age brackets · roster</h3></div>
             <div className="card-body">
               <p className="kpi-caption">Skill-tracking app</p>
-              <p className="chart-caption">Age brackets on the skill roster. {rosterMonthNote}</p>
+              <p className="chart-caption">Age brackets on the skill roster. Brackets under 2% are grouped as Others. {rosterMonthNote}</p>
               <ColumnBar
-                labels={data.demographics?.age_brackets ? Object.keys(data.demographics.age_brackets) : []}
-                values={data.demographics?.age_brackets ? Object.values(data.demographics.age_brackets) : []}
-                onBarClick={(label) => handleDrilldown('age', label)}
+                labels={ageShare.map((row) => row.label)}
+                values={ageShare.map((row) => row.value)}
+                onBarClick={(label) => {
+                  const row = ageShare.find((item) => item.label === label);
+                  handleDrilldown('age', label, memberParams(row));
+                }}
               />
             </div>
           </div>
@@ -425,16 +477,21 @@ export default function SkillingPage() {
               <div className="card-header"><h3><Briefcase size={16} style={{ marginRight: 6 }} />Post-Training Career Outcomes</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">M&E field sheet</p>
-                <p className="chart-caption">Current status of skilling program participants. {sheetMonthNote}</p>
+                <p className="chart-caption">Current status of skilling program participants. Statuses under 2% are grouped as Others. {sheetMonthNote}</p>
                 <EChart
                   option={funnelOption(
-                    CAREER_STAGES.map((stage) => {
-                      const row = (data.mixSkilling?.by_placement || []).find((item) => item.label === stage.key);
-                      return row && Number(row.value) > 0 ? { label: stage.label, value: row.value, key: stage.key, color: stage.color } : null;
-                    }).filter(Boolean),
+                    careerShare.map((row) => ({
+                      label: row.label,
+                      value: row.value,
+                      key: row.key || row.label,
+                      color: row.color
+                    })),
                     { percent: true, keepOrder: true }
                   )}
-                  onPoint={(p) => handleDrilldown('mix_placement', p.data?.key || p.name)}
+                  onPoint={(p) => {
+                    const row = careerShare.find((item) => item.label === (p.name || p.data?.name));
+                    handleDrilldown('mix_placement', row?.key || p.data?.key || p.name, memberParams(row));
+                  }}
                 />
               </div>
             </div>
@@ -442,12 +499,15 @@ export default function SkillingPage() {
               <div className="card-header"><h3>Employment outcomes of candidates</h3></div>
               <div className="card-body">
                 <p className="kpi-caption">Skill-tracking app</p>
-                <p className="chart-caption">Follow-up work status (n = {formatCount(data.beneficiaries?.monitored_people)} people). {rosterMonthNote}</p>
+                <p className="chart-caption">Follow-up work status (n = {formatCount(data.beneficiaries?.monitored_people)} people). Slices under 2% are grouped as Others. {rosterMonthNote}</p>
                 <BrandDoughnut
-                  labels={data.beneficiaries?.status_breakdown?.map(r => r.status) || []}
-                  values={data.beneficiaries?.status_breakdown?.map(r => r.count) || []}
+                  labels={workShare.map((row) => row.label)}
+                  values={workShare.map((row) => row.value)}
                   percent
-                  onSliceClick={(label) => handleDrilldown('work_status', label)}
+                  onSliceClick={(label) => {
+                    const row = workShare.find((item) => item.label === label);
+                    handleDrilldown('work_status', label, memberParams(row));
+                  }}
                 />
                 {outcomes.districts.length > 0 && (
                   <EChart
