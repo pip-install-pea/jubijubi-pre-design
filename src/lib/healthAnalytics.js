@@ -250,6 +250,11 @@ function calendarYear(filters) {
   return years.length ? years.join(',') : String(DEFAULT_YEAR);
 }
 
+/** Blank Year and the default year share one calendar year on every Health query. */
+export function healthFilters(filters = {}) {
+  return { ...filters, year: calendarYear(filters) };
+}
+
 function mapDiseaseRows(rows) {
   return (rows || [])
     .map((r) => ({
@@ -409,7 +414,7 @@ export async function getReach(filters) {
     );
   }
 
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = buildFilters(healthFilters(filters), {
     date_col: 'created_at',
     state_col: 'state_id',
     district_col: 'district_id',
@@ -538,12 +543,11 @@ export async function getDepth(filters) {
     : [];
 
   let totalAppts = 0;
-  let repeatPct = 0;
   let feesCollected = 0;
   let appointmentsAvailable = false;
 
   if (isDatabaseConfigured()) {
-    const { clauses, params } = buildFilters(filters, {
+    const { clauses, params } = buildFilters(healthFilters(filters), {
       date_col: 'created_at',
       state_col: 'state_id',
       district_col: 'district_id',
@@ -556,20 +560,6 @@ export async function getDepth(filters) {
       `SELECT COALESCE(COUNT(*), 0)::integer FROM health_patient_appointments ${w}`,
       params
     );
-    const repeatCount = await safeScalar(`
-      SELECT COALESCE(COUNT(*), 0)::integer FROM (
-        SELECT profile_patient_id
-        FROM health_patient_appointments ${w}
-        GROUP BY profile_patient_id HAVING COUNT(*) > 1
-      ) t
-    `, params);
-    const totalPatientsForRepeat = await safeScalar(`
-      SELECT COALESCE(COUNT(DISTINCT profile_patient_id), 0)::integer
-      FROM health_patient_appointments ${w}
-    `, params);
-    repeatPct = totalPatientsForRepeat > 0
-      ? parseFloat((repeatCount / totalPatientsForRepeat * 100).toFixed(2))
-      : 0.0;
     feesCollected = await safeScalar(`
       SELECT COALESCE(SUM(CASE WHEN paid_amount ~ '^[0-9.]+$' THEN paid_amount::numeric ELSE 0 END), 0)
       FROM health_patient_appointments ${w}
@@ -578,7 +568,7 @@ export async function getDepth(filters) {
   }
 
   return {
-    repeat_patient_pct: appointmentsAvailable ? repeatPct : null,
+    effective_year: year,
     total_appointments: appointmentsAvailable ? totalAppts : null,
     fees_collected: appointmentsAvailable ? Number(feesCollected || 0) : null,
     appointments_available: appointmentsAvailable,
@@ -595,9 +585,11 @@ export async function getDepth(filters) {
 }
 
 export async function getInclusion(filters) {
+  const effectiveYear = calendarYear(filters);
   if (!isDatabaseConfigured()) {
     return {
       available: false,
+      effective_year: effectiveYear,
       community_interventions: [],
       senior_citizens: null,
       people_with_disability: null,
@@ -605,7 +597,7 @@ export async function getInclusion(filters) {
     };
   }
 
-  const { clauses, params } = buildFilters(filters, {
+  const { clauses, params } = buildFilters(healthFilters(filters), {
     date_col: 'created_at',
     state_col: 'state_id',
     district_col: 'district_id',
@@ -642,6 +634,7 @@ export async function getInclusion(filters) {
 
     return {
       available: true,
+      effective_year: effectiveYear,
       community_interventions: communityInterventions,
       senior_citizens: row.seniors,
       people_with_disability: row.disabled,
@@ -651,6 +644,7 @@ export async function getInclusion(filters) {
     console.warn('[healthAnalytics] inclusion skipped:', err.message);
     return {
       available: false,
+      effective_year: effectiveYear,
       community_interventions: [],
       senior_citizens: null,
       people_with_disability: null,
@@ -710,7 +704,7 @@ export async function getHealthGeoBenchmarks(filters) {
     : `GROUP BY p.state_id`;
 
   const run = async (f, limit) => {
-    const { clauses, params } = buildFilters(f, opts);
+    const { clauses, params } = buildFilters(healthFilters(f), opts);
     const lim = limit ? `LIMIT ${Number(limit)}` : '';
     return safeFetchall(
       `SELECT ${joinSelect},

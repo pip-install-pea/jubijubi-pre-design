@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth.js';
 import { fetchall, scalar, isDatabaseConfigured } from '@/lib/db.js';
 import { getFiltersFromRequest, buildFilters, whereStr } from '@/lib/analytics.js';
-import { getReach, getDepth } from '@/lib/healthAnalytics.js';
+import { getReach, getDepth, healthFilters } from '@/lib/healthAnalytics.js';
 import { buildJob } from '@/lib/phpRegistry.js';
 import { postPhpEnvelope, sanitiseRow } from '@/lib/phpClient.js';
 import { addColFilters, filterRows, parseColFilters } from '@/lib/drilldownFilters.js';
@@ -68,7 +68,7 @@ export async function GET(req) {
     const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
     const per_page = Math.min(200, Math.max(1, parseInt(url.searchParams.get('per_page') || '50', 10)));
     const offset = (page - 1) * per_page;
-    const filters = getFiltersFromRequest(req);
+    const filters = healthFilters(getFiltersFromRequest(req));
 
     if (drill_type === 'patients') {
       const reach = await getReach(filters);
