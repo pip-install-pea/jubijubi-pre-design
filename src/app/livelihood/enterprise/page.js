@@ -142,7 +142,7 @@ export default function EnterprisePage() {
               </div>
               <div className="card-body">
                 <FilterTags monthIgnored={monthIgnored} />
-                <p className="chart-caption">No outside funding – completely by JBF</p>
+                <div className="callout">No outside funding – completely by JBF</div>
                 <div className="kpi-grid">
                   <div className="kpi-card">
                     <div className="kpi-body">

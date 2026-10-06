@@ -1365,6 +1365,18 @@ img {
   line-height: 1.4;
 }
 
+.callout {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-left: 4px solid var(--navy);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .chart-wrap {
   width: 100%;
 }
